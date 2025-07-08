@@ -1,0 +1,7 @@
+streamlit
+pandas
+openpyxl
+natasha
+requests
+plotly
+openai>=1.0.0
