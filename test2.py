@@ -3,15 +3,6 @@
 import subprocess
 import sys
 
-#required_packages = [
-#    "pandas", "natasha", "streamlit", "requests", "plotly", "openpyxl"
-#]
-#for pkg in required_packages:
-#    try:
-#        __import__(pkg)
- #   except ImportError:
- #       subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-
 # ----------------------
 # 2. Импорты и константы
 # ----------------------
