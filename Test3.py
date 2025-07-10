@@ -1,38 +1,22 @@
-# filename: app.py
-
+import asyncio
+import aiofiles
+import aiofiles.os
 import os
 import json
-import asyncio
 from datetime import datetime
+
 import pandas as pd
-import numpy as np
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
 from openai import OpenAI
 
-# Константы
+# Constants
 DEESEEK_API_URL = "https://api.studio.nebius.ai/v1/"
-ARCHIVE_DIR = "archive"
-os.makedirs(ARCHIVE_DIR, exist_ok=True)
+RESULTS_CSV = "reflection_analysis_results.csv"
 
-
-@st.cache_data
-def load_data(file_path: str) -> pd.DataFrame:
-    df = pd.read_excel(file_path)
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    if 'data' in df.columns:
-        df['data'] = pd.to_datetime(df['data'], errors='coerce')
-    df['text'] = df.get('text', '').astype(str).fillna('')
-    return df
-
-def convert_sentiment_to_10_point(score: float) -> float:
-    if not isinstance(score, (int, float)):
-        return 5.5
-    return (score + 1) * 4.5 + 1
-
-def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
-    base = {
+async def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
+    """
+    Асинхронный вызов DeepSeek API для анализа одной рефлексии.
+    """
+    error_result = {
         "sentiment_score": 0.0,
         "learning_feedback": "",
         "teamwork_feedback": "",
@@ -41,98 +25,98 @@ def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
         "teamwork_sentiment_score": 0.0,
         "organization_sentiment_score": 0.0,
     }
-    if not text.strip():
-        return base
+    if not text or not isinstance(text, str) or not text.strip():
+        return error_result
+
     prompt = (
-        "Ты — ИИ-ассистент для анализа текстов рефлексии. Верни JSON:\n"
-        "…ключи как в базовом словаре…\n"
+        "Ты — ИИ-ассистент для анализа текстов рефлексии. Проанализируй рефлексию школьника. "
+        "Верни JSON с ключами: sentiment_score, learning_feedback, teamwork_feedback, "
+        "organization_feedback, learning_sentiment_score, teamwork_sentiment_score, organization_sentiment_score. "
         f"Текст: \"{text}\""
     )
+
     try:
-        resp = client.chat.completions.create(
+        # Асинхронный запрос к API (OpenAI Python SDK поддерживает aiohttp под капотом)
+        response = await client.chat.completions.acreate(
             model="deepseek-ai/DeepSeek-V3",
-            messages=[{"role":"user","content":prompt}],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
-            response_format={"type":"json_object"}
+            response_format={"type": "json_object"}
         )
-        result = json.loads(resp.choices[0].message.content)
-        for k,v in base.items():
-            result.setdefault(k, v)
+        content = response.choices[0].message.content
+        result = json.loads(content)
+        # Гарантируем наличие всех ключей
+        for key, default in error_result.items():
+            result.setdefault(key, default)
         return result
-    except Exception:
-        return base
 
-async def analyze_async(client: OpenAI, texts: list[str]) -> pd.DataFrame:
-    loop = asyncio.get_event_loop()
-    tasks = [
-        loop.run_in_executor(None, analyze_reflection_with_deepseek, client, t)
-        for t in texts
-    ]
-    results = await asyncio.gather(*tasks)
-    return pd.DataFrame(results)
+    except Exception as e:
+        print(f"Ошибка при вызове DeepSeek API: {e}")
+        return error_result
 
+async def load_previous_results() -> pd.DataFrame:
+    """
+    Загружает ранее сохранённые результаты, если файл существует.
+    """
+    if await aiofiles.os.path.exists(RESULTS_CSV):
+        return pd.read_csv(RESULTS_CSV)
+    return pd.DataFrame()
 
-def main():
-    st.set_page_config(layout="wide")
-    st.title("Интерактивный дашборд для анализа рефлексий")
+async def save_results(df: pd.DataFrame):
+    """
+    Сохраняет итоговый DataFrame в CSV.
+    """
+    df.to_csv(RESULTS_CSV, index=False)
 
-    with st.sidebar.form("data_form"):
-        st.header("🗂 Источник данных")
-        archive_files = sorted([f for f in os.listdir(ARCHIVE_DIR) if f.endswith('.csv')], reverse=True)
-        choice = st.selectbox("Выберите анализ или новый:", ["Новый анализ"] + archive_files)
-        if choice == "Новый анализ":
-            upload = st.file_uploader("Загрузить Excel (.xlsx)", type="xlsx")
-            api_key = st.text_input("API-ключ DeepSeek", type="password")
-        run_btn = st.form_submit_button("Запустить анализ")
+async def main(input_excel: str, api_key: str):
+    # Подготовка клиента
+    client = OpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
 
-    if not run_btn:
-        st.info("Заполните форму и нажмите «Запустить анализ»")
-        return
+    # Загрузка исходных данных
+    df = pd.read_excel(input_excel)
+    df.columns = [str(col).strip().lower() for col in df.columns]
+    df['text'] = df['text'].astype(str).fillna('')
 
-    # Загрузка или повторное чтение CSV
-    if choice != "Новый анализ":
-        df = pd.read_csv(os.path.join(ARCHIVE_DIR, choice), parse_dates=['data'])
-        # Убираем дубли колонок
-        df = df.loc[:, ~df.columns.duplicated()]
-        current_name = choice
+    # Загрузка предыдущих результатов
+    prev_df = await load_previous_results()
 
+    # Определяем новые или ещё не обработанные записи
+    if not prev_df.empty and 'text' in prev_df.columns:
+        processed_texts = set(prev_df['text'])
+        new_df = df[~df['text'].isin(processed_texts)].copy()
     else:
-        df = load_data(upload)
-        base_name = os.path.splitext(upload.name)[0]
-        current_name = f"{base_name}_processed.csv"
-        csv_path = os.path.join(ARCHIVE_DIR, current_name)
+        new_df = df.copy()
 
-        if os.path.exists(csv_path):
-            df = pd.read_csv(csv_path, parse_dates=['data'])
-            df = df.loc[:, ~df.columns.duplicated()]
-        else:
-            client = OpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
-            with st.spinner("Идёт анализ..."):
-                results_df = asyncio.run(analyze_async(client, df['text'].tolist()))
-                df = pd.concat([df.reset_index(drop=True), results_df.reset_index(drop=True)], axis=1)
-                # Удаляем возможные дубли после объединения
-                df = df.loc[:, ~df.columns.duplicated()]
-                for c in ['sentiment_score','learning_sentiment_score',
-                          'teamwork_sentiment_score','organization_sentiment_score']:
-                    df[c.replace('_score','_10_point')] = df[c].apply(convert_sentiment_to_10_point)
-                df.to_csv(csv_path, index=False)
-                st.success(f"Результаты сохранены в {current_name}")
-
-    # Фильтрация
-    st.sidebar.header("📊 Фильтры")
-    if 'data' in df.columns and not df['data'].isna().all():
-        min_d, max_d = df['data'].min().date(), df['data'].max().date()
-        if min_d < max_d:
-            start, end = st.sidebar.slider("Даты", min_d, max_d, (min_d, max_d))
-            mask = df['data'].dt.date.between(start, end)
-            df = df[mask]
-
-    if df.empty:
-        st.error("Нет данных после фильтрации.")
+    # Если нечего обрабатывать, сохраняем и выходим
+    if new_df.empty:
+        print("Нет новых рефлексий для обработки.")
         return
 
-    # Здесь — остальная логика визуализации (графики, таблицы и т.д.)
-    st.dataframe(df.head())
+    # Запускаем анализ асинхронно
+    tasks = [analyze_reflection_with_deepseek(client, text)
+             for text in new_df['text']]
+    results = await asyncio.gather(*tasks)
+    results_df = pd.DataFrame(results)
+
+    # Объединяем с new_df
+    combined_new = pd.concat([new_df.reset_index(drop=True), results_df], axis=1)
+
+    # Объединяем с ранее сохранёнными
+    if not prev_df.empty:
+        final_df = pd.concat([prev_df, combined_new], ignore_index=True)
+    else:
+        final_df = combined_new
+
+    # Сохраняем итог
+    await save_results(final_df)
+    print(f"Обработано записей: {len(combined_new)}. Всего в файле: {len(final_df)}")
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Async DeepSeek Reflection Analysis")
+    parser.add_argument("--input", required=True, help="Путь к Excel-файлу с рефлексиями")
+    parser.add_argument("--api_key", required=True, help="API-ключ DeepSeek")
+    args = parser.parse_args()
+
+    asyncio.run(main(args.input, args.api_key))
