@@ -8,3 +8,5 @@ openai>=1.0.0
 wordcloud==1.9.3
 setuptools
 numpy>=1.23.0
+aiofiles
+asyncio
