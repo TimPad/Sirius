@@ -36,7 +36,7 @@ async def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
     )
 
     try:
-        # Асинхронный запрос к API (OpenAI Python SDK поддерживает aiohttp под капотом)
+        # Асинхронный запрос к API
         response = await client.chat.completions.acreate(
             model="deepseek-ai/DeepSeek-V3",
             messages=[{"role": "user", "content": prompt}],
@@ -115,8 +115,29 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Async DeepSeek Reflection Analysis")
-    parser.add_argument("--input", required=True, help="Путь к Excel-файлу с рефлексиями")
-    parser.add_argument("--api_key", required=True, help="API-ключ DeepSeek")
+    parser.add_argument(
+        "--input", 
+        default=os.environ.get("REFLECTION_INPUT"),
+        help="Путь к Excel-файлу с рефлексиями"
+    )
+    parser.add_argument(
+        "--api_key", 
+        default=os.environ.get("DEEPSEEK_API_KEY"),
+        help="API-ключ DeepSeek"
+    )
     args = parser.parse_args()
 
-    asyncio.run(main(args.input, args.api_key))
+    if not args.input or not args.api_key:
+        parser.print_help()
+        print("
+Пожалуйста, укажите путь к файлу и API-ключ через параметры --input и --api_key 
+или установите переменные окружения REFLECTION_INPUT и DEEPSEEK_API_KEY.")
+    else:
+        asyncio.run(main(args.input, args.api_key))
+
+# requirements.txt
+# ----------------
+# pandas
+# openai
+# aiofiles
+# asyncio
