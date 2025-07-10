@@ -129,9 +129,8 @@ if __name__ == "__main__":
 
     if not args.input or not args.api_key:
         parser.print_help()
-        print("
-Пожалуйста, укажите путь к файлу и API-ключ через параметры --input и --api_key 
-или установите переменные окружения REFLECTION_INPUT и DEEPSEEK_API_KEY.")
+        print('''Пожалуйста, укажите путь к файлу и API-ключ через параметры --input и --api_key
+или установите переменные окружения REFLECTION_INPUT и DEEPSEEK_API_KEY.''')
     else:
         asyncio.run(main(args.input, args.api_key))
 
