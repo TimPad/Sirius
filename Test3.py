@@ -1,6 +1,5 @@
+# filename: app.py
 
-# 1. Импорты и константы
-# ----------------------
 import os
 import json
 import asyncio
@@ -18,8 +17,6 @@ ARCHIVE_DIR = "archive"
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 
-# 2. Утилиты
-# ----------------------
 @st.cache_data
 def load_data(file_path: str) -> pd.DataFrame:
     df = pd.read_excel(file_path)
@@ -35,7 +32,6 @@ def convert_sentiment_to_10_point(score: float) -> float:
     return (score + 1) * 4.5 + 1
 
 def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
-    """Синхронная функция-обёртка для DeepSeek."""
     base = {
         "sentiment_score": 0.0,
         "learning_feedback": "",
@@ -67,7 +63,6 @@ def analyze_reflection_with_deepseek(client: OpenAI, text: str) -> dict:
         return base
 
 async def analyze_async(client: OpenAI, texts: list[str]) -> pd.DataFrame:
-    """Асинхронно запускает анализ всех текстов и возвращает DataFrame."""
     loop = asyncio.get_event_loop()
     tasks = [
         loop.run_in_executor(None, analyze_reflection_with_deepseek, client, t)
@@ -77,13 +72,10 @@ async def analyze_async(client: OpenAI, texts: list[str]) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 
-# 3. Главная функция
-# ----------------------
 def main():
     st.set_page_config(layout="wide")
     st.title("Интерактивный дашборд для анализа рефлексий")
 
-    # --- Sidebar: выбор источника и запуск ---
     with st.sidebar.form("data_form"):
         st.header("🗂 Источник данных")
         archive_files = sorted([f for f in os.listdir(ARCHIVE_DIR) if f.endswith('.csv')], reverse=True)
@@ -97,31 +89,36 @@ def main():
         st.info("Заполните форму и нажмите «Запустить анализ»")
         return
 
-    # --- Загрузка данных и кеширование по CSV ---
+    # Загрузка или повторное чтение CSV
     if choice != "Новый анализ":
         df = pd.read_csv(os.path.join(ARCHIVE_DIR, choice), parse_dates=['data'])
+        # Убираем дубли колонок
+        df = df.loc[:, ~df.columns.duplicated()]
         current_name = choice
+
     else:
         df = load_data(upload)
         base_name = os.path.splitext(upload.name)[0]
         current_name = f"{base_name}_processed.csv"
         csv_path = os.path.join(ARCHIVE_DIR, current_name)
+
         if os.path.exists(csv_path):
             df = pd.read_csv(csv_path, parse_dates=['data'])
+            df = df.loc[:, ~df.columns.duplicated()]
         else:
-            # новый анализ
             client = OpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
             with st.spinner("Идёт анализ..."):
                 results_df = asyncio.run(analyze_async(client, df['text'].tolist()))
-                df = pd.concat([df.reset_index(drop=True), results_df], axis=1)
-                # конвертация
+                df = pd.concat([df.reset_index(drop=True), results_df.reset_index(drop=True)], axis=1)
+                # Удаляем возможные дубли после объединения
+                df = df.loc[:, ~df.columns.duplicated()]
                 for c in ['sentiment_score','learning_sentiment_score',
                           'teamwork_sentiment_score','organization_sentiment_score']:
                     df[c.replace('_score','_10_point')] = df[c].apply(convert_sentiment_to_10_point)
                 df.to_csv(csv_path, index=False)
                 st.success(f"Результаты сохранены в {current_name}")
 
-    # --- Основной dashboard ---
+    # Фильтрация
     st.sidebar.header("📊 Фильтры")
     if 'data' in df.columns and not df['data'].isna().all():
         min_d, max_d = df['data'].min().date(), df['data'].max().date()
@@ -129,13 +126,13 @@ def main():
             start, end = st.sidebar.slider("Даты", min_d, max_d, (min_d, max_d))
             mask = df['data'].dt.date.between(start, end)
             df = df[mask]
+
     if df.empty:
         st.error("Нет данных после фильтрации.")
         return
 
-    # ... здесь вставьте оставшуюся логику визуализации без изменений ...
-    # (графики, таблицы, тепловые карты, радары и т.д.)
-    st.write(df.head())
+    # Здесь — остальная логика визуализации (графики, таблицы и т.д.)
+    st.dataframe(df.head())
 
 if __name__ == "__main__":
     main()
