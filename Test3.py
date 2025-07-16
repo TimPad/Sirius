@@ -13,16 +13,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date
 import json
-# ### ИЗМЕНЕНО: Импортируем асинхронного клиента и библиотеку asyncio
 from openai import AsyncOpenAI
 import asyncio
 import numpy as np
-import os
+import os # Импорт os уже был, но убедимся, что он есть
 
 # Константы для API DeepSeek
 DEESEEK_API_URL = "https://api.studio.nebius.ai/v1/"
-# ### ДОБАВЛЕНО: Константа для папки с архивом
-ARCHIVE_DIR = "archive"
+# ### ИЗМЕНЕНО: Константа для папки с отчетами
+REPORTS_DIR = os.path.join("main", "data")
 
 
 # ----------------------
@@ -42,7 +41,7 @@ def load_data(file_path: str) -> pd.DataFrame:
 # ----------------------
 
 # ----------------------
-# 5. DeepSeek API анализ (### ИЗМЕНЕНО НА АСИНХРОННЫЙ ВАРИАНТ)
+# 5. DeepSeek API анализ (без изменений)
 # ----------------------
 async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> dict:
     """
@@ -75,7 +74,6 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
     )
 
     try:
-        # ### ИЗМЕНЕНО: Используем 'await' для асинхронного вызова API
         response = await client.chat.completions.create(
             model="deepseek-ai/DeepSeek-V3",
             messages=[{"role": "user", "content": prompt}],
@@ -84,14 +82,12 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
         )
         content = response.choices[0].message.content
         result = json.loads(content)
-        # Проверяем и добавляем недостающие ключи для надежности
         for key, value in error_result.items():
             if key not in result:
                 result[key] = value
         return result
 
     except Exception as e:
-        # В асинхронном коде ошибки могут быть сложнее, логируем для отладки
         print(f"Error processing text: '{text[:50]}...'. Error: {e}")
         st.error(f"Ошибка при вызове DeepSeek API: {e}")
         return error_result
@@ -107,20 +103,16 @@ def convert_sentiment_to_10_point(score: float) -> float:
 # ----------------------
 # 7. Основная логика и дашборд на Streamlit
 # ----------------------
-# ----------------------
-# 7. Основная логика и дашборд на Streamlit
-# ----------------------
 def main():
     st.set_page_config(layout="wide")
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
-    # ### ИСПРАВЛЕНИЕ: Блок с описанием перенесен сюда, чтобы он отображался всегда ###
     with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=True):
         st.markdown("""
         **Цель дашборда** — помочь педагогам и кураторам быстро оценить эмоциональное состояние группы, выявить общие тенденции и определить учащихся, требующих особого внимания, на основе их письменных рефлексий.
 
         **Как это работает?**
-        1.  Вы загружаете Excel-файл с текстами рефлексий или выбираете готовый анализ из архива в меню слева.
+        1.  Вы загружаете Excel-файл с текстами рефлексий или выбираете готовый анализ из папки `main/data` в меню слева.
         2.  При новом анализе искусственный интеллект (DeepSeek) анализирует каждый текст и оценивает его тональность по нескольким параметрам.
         3.  Результаты визуализируются в виде интерактивных графиков и таблиц для удобной интерпретации.
 
@@ -135,22 +127,24 @@ def main():
         *   В разделе **"Зоны риска"** можно увидеть список учащихся, которые неоднократно писали рефлексии с негативной окраской за выбранный период.
         """)
 
-    # --- Блок работы с данными и сайдбаром (остается без изменений) ---
-    if not os.path.exists(ARCHIVE_DIR):
-        os.makedirs(ARCHIVE_DIR)
+    # ### ИЗМЕНЕНО: Создаем папку для отчетов, если она не существует
+    if not os.path.exists(REPORTS_DIR):
+        os.makedirs(REPORTS_DIR)
 
     st.sidebar.header("🗂️ Источник данных")
-    archive_files = [f for f in os.listdir(ARCHIVE_DIR) if f.endswith('.xlsx')]
-    data_source_options = ["Новый анализ"] + sorted(archive_files, reverse=True)
+    # ### ИЗМЕНЕНО: Ищем файлы в новой папке REPORTS_DIR
+    report_files = [f for f in os.listdir(REPORTS_DIR) if f.endswith('.xlsx')]
+    data_source_options = ["Новый анализ"] + sorted(report_files, reverse=True)
     selected_source = st.sidebar.selectbox("Выберите, что вы хотите сделать:", data_source_options)
 
     df = None
     uploaded_file = None
 
     if selected_source != "Новый анализ":
-        st.sidebar.success(f"Загружен анализ: {selected_source}")
-        archive_file_path = os.path.join(ARCHIVE_DIR, selected_source)
-        df = load_data(archive_file_path)
+        st.sidebar.success(f"Загружен отчет: {selected_source}")
+        # ### ИЗМЕНЕНО: Загружаем файл из папки REPORTS_DIR
+        report_file_path = os.path.join(REPORTS_DIR, selected_source)
+        df = load_data(report_file_path)
         st.session_state['current_file_name'] = selected_source
     else:
         st.sidebar.header("📄 Загрузка для нового анализа")
@@ -160,12 +154,10 @@ def main():
             df = load_data(uploaded_file)
             df['text'] = df['text'].astype(str).fillna('')
 
-    # --- Проверка на загрузку файла (теперь она идет ПОСЛЕ блока с описанием) ---
     if df is None:
-        st.info("Пожалуйста, загрузите файл для нового анализа или выберите готовый анализ из архива в боковой панели.")
+        st.info("Пожалуйста, загрузите файл для нового анализа или выберите готовый отчет в боковой панели.")
         return
 
-    # --- Остальной код остается без изменений ---
     api_key = None
     client = None
     if selected_source == "Новый анализ":
@@ -210,14 +202,15 @@ def main():
 
     if selected_source == "Новый анализ" and uploaded_file:
         st.sidebar.header("💾 Сохранение")
-        if st.sidebar.button("Сохранить результат в архив"):
+        if st.sidebar.button("Сохранить результат в отчет"):
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             base_filename = os.path.splitext(uploaded_file.name)[0]
-            archive_filename = f"{base_filename}_processed_{timestamp}.xlsx"
-            archive_filepath = os.path.join(ARCHIVE_DIR, archive_filename)
+            report_filename = f"{base_filename}_processed_{timestamp}.xlsx"
+            # ### ИЗМЕНЕНО: Сохраняем файл в папку REPORTS_DIR
+            report_filepath = os.path.join(REPORTS_DIR, report_filename)
             processed_df_to_save = st.session_state[session_key]
-            processed_df_to_save.to_excel(archive_filepath, index=False)
-            st.sidebar.success(f"Анализ сохранен как:\n{archive_filename}")
+            processed_df_to_save.to_excel(report_filepath, index=False)
+            st.sidebar.success(f"Анализ сохранен как:\n{report_filename}\nв папку main/data")
             st.rerun()
 
     filtered_df = df.copy()
@@ -244,8 +237,9 @@ def main():
         st.error("Нет данных для отображения. Пожалуйста, измените фильтры или загрузите другой файл.")
         return
 
+    # --- Дальнейший код дашборда остается без изменений ---
+
     st.header("Общая динамика и групповой анализ")
-    # ... и так далее, весь остальной код без изменений ...
     daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
     daily_df = daily_groups.agg(
         avg_emotion=('emotion', np.mean),
