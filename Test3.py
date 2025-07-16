@@ -21,7 +21,7 @@ import os # Импорт os уже был, но убедимся, что он е
 # Константы для API DeepSeek
 DEESEEK_API_URL = "https://api.studio.nebius.ai/v1/"
 # ### ИЗМЕНЕНО: Константа для папки с отчетами
-REPORTS_DIR = os.path.join("main", "data")
+REPORTS_DIR = os.path.join("data")
 
 
 # ----------------------
