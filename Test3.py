@@ -224,6 +224,7 @@ def main():
     else:
         df = st.session_state[session_key]
 
+    # ... (внутри функции main)
     if selected_source == "Новый анализ" and uploaded_file:
         st.sidebar.header("💾 Сохранение")
         if st.sidebar.button("Сохранить в архив"):
@@ -231,30 +232,33 @@ def main():
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
                 base_filename = os.path.splitext(uploaded_file.name)[0]
                 report_filename = f"{base_filename}_processed_{timestamp}"
-                
+
                 processed_df_to_save = st.session_state[session_key].copy()
                 processed_df_to_save['report_name'] = report_filename
 
-                # --- ИСПРАВЛЕНИЕ ОШИБКИ JSON SERIALIZABLE ---
-                # 1. Явно преобразуем колонку с датой в строку формата ISO
+                # --- БЛОК ПОДГОТОВКИ ДАННЫХ (остается таким же) ---
                 if 'data' in processed_df_to_save.columns:
                     processed_df_to_save['data'] = pd.to_datetime(processed_df_to_save['data']).dt.strftime('%Y-%m-%dT%H:%M:%S')
-
-                # 2. Заменяем все "пустые" значения Python (NaN, NaT) на None (эквивалент NULL в базах данных)
-                df_for_upload = processed_df_to_save.replace({pd.NaT: None, np.nan: None})
                 
-                # 3. Конвертируем в список словарей
+                df_for_upload = processed_df_to_save.replace({pd.NaT: None, np.nan: None})
+                df_for_upload = df_for_upload.drop(columns=['id'], errors='ignore')
                 data_to_upload = df_for_upload.to_dict(orient='records')
                 # -----------------------------------------------
                 
                 try:
-                    supabase.table('reports').insert(data_to_upload).execute()
-                    st.sidebar.success(f"Анализ сохранен как:\n**{report_filename}**")
+                    # --- ИЗМЕНЕННАЯ СТРОКА: ИСПОЛЬЗУЕМ UPSERT ---
+                    # Мы говорим: при конфликте по колонкам 'username' и 'data', ничего не делай.
+                    supabase.table('reports').upsert(
+                        data_to_upload,
+                        on_conflict='username,data' 
+                    ).execute()
+                    # ---------------------------------------------
+                    
+                    st.sidebar.success(f"Анализ сохранен как:\n**{report_filename}**\nДубликаты проигнорированы.")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Ошибка сохранения в Supabase: {e}")
-
     if df.empty:
         st.error("Нет данных для отображения. Пожалуйста, измените фильтры или загрузите другой файл.")
         return
