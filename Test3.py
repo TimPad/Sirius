@@ -11,18 +11,18 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, date
+from datetime import datetime
 import json
 from openai import AsyncOpenAI
 import asyncio
 import numpy as np
-import os # Импорт os уже был, но убедимся, что он есть
+import os
+
+### НОВОЕ: Импорты для работы с Supabase
+from supabase import create_client, Client
 
 # Константы для API DeepSeek
 DEESEEK_API_URL = "https://api.studio.nebius.ai/v1/"
-# ### ИЗМЕНЕНО: Константа для папки с отчетами
-REPORTS_DIR = os.path.join("data")
-
 
 # ----------------------
 # 3. Функция загрузки данных (без изменений)
@@ -101,50 +101,85 @@ def convert_sentiment_to_10_point(score: float) -> float:
     return (score + 1) * 4.5 + 1
 
 # ----------------------
-# 7. Основная логика и дашборд на Streamlit
+# 7. Функции для работы с Supabase
+# ----------------------
+
+@st.cache_resource
+def init_supabase_client():
+    """Инициализирует и возвращает клиент Supabase."""
+    try:
+        supabase_url = st.secrets["SUPABASE_URL"]
+        supabase_key = st.secrets["SUPABASE_KEY"]
+        return create_client(supabase_url, supabase_key)
+    except KeyError as e:
+        st.error(f"Ошибка: ключ '{e.args[0]}' не найден в секретах Streamlit. Пожалуйста, добавьте его в настройки.")
+        return None
+    except Exception as e:
+        st.error(f"Ошибка подключения к Supabase: {e}")
+        return None
+
+@st.cache_data(ttl=300)
+def get_report_list_from_supabase(_supabase: Client) -> list:
+    """Получает список уникальных имен отчетов из Supabase."""
+    try:
+        response = _supabase.table('reports').select('report_name', count='exact').execute()
+        if response.data:
+            unique_names = sorted(list(set(item['report_name'] for item in response.data)), reverse=True)
+            return unique_names
+        return []
+    except Exception as e:
+        st.error(f"Ошибка при получении списка отчетов из Supabase: {e}")
+        return []
+
+@st.cache_data
+def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFrame:
+    """Загружает все данные для указанного отчета из Supabase в DataFrame."""
+    try:
+        response = _supabase.table('reports').select('*').eq('report_name', report_name).execute()
+        df = pd.DataFrame(response.data)
+        if 'data' in df.columns:
+            df['data'] = pd.to_datetime(df['data'], errors='coerce')
+        if not df.empty:
+            df = df.drop(columns=['id', 'created_at', 'report_name'], errors='ignore')
+        return df
+    except Exception as e:
+        st.error(f"Ошибка при загрузке отчета '{report_name}': {e}")
+        return pd.DataFrame()
+
+
+# ----------------------
+# 8. Основная логика и дашборд на Streamlit
 # ----------------------
 def main():
     st.set_page_config(layout="wide")
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
-    with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=True):
+    with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=False):
         st.markdown("""
         **Цель дашборда** — помочь педагогам и кураторам быстро оценить эмоциональное состояние группы, выявить общие тенденции и определить учащихся, требующих особого внимания, на основе их письменных рефлексий.
 
         **Как это работает?**
-        1.  Вы загружаете Excel-файл с текстами рефлексий или выбираете готовый анализ из папки `main/data` в меню слева.
-        2.  При новом анализе искусственный интеллект (DeepSeek) анализирует каждый текст и оценивает его тональность по нескольким параметрам.
-        3.  Результаты визуализируются в виде интерактивных графиков и таблиц для удобной интерпретации.
-
-        **Ключевые метрики на графиках:**
-        *   `Самооценка (emotion)`: Оценка (от 1 до 10), которую **ученик сам** поставил своему состоянию. Это его субъективное восприятие.
-        *   `Общая тональность (sentiment_10_point)`: Оценка тональности текста (от 1 до 10), данная **искусственным интеллектом**. Это более объективный взгляд на написанное, который помогает сравнить самоощущение ученика с тем, что он в действительности пишет.
-        *   `Тональность по аспектам (Учёба, Команда, Организация)`: Детальный анализ от ИИ, показывающий отношение ученика к конкретным сферам: учебному процессу, взаимодействию в команде и организационным/досуговым моментам.
-
-        **Как пользоваться дашбордом:**
-        *   Используйте **фильтры на боковой панели слева**, чтобы выбрать источник данных и отфильтровать результаты по дате.
-        *   Для детального анализа выберите **конкретного ученика** из выпадающего списка в основной части дашборда.
-        *   В разделе **"Зоны риска"** можно увидеть список учащихся, которые неоднократно писали рефлексии с негативной окраской за выбранный период.
+        1.  Для **нового анализа** загрузите Excel-файл с текстами рефлексий.
+        2.  Чтобы посмотреть **старый отчет**, выберите его из выпадающего списка. Данные загрузятся из облачного архива.
+        3.  При новом анализе искусственный интеллект (DeepSeek) анализирует каждый текст.
+        4.  После анализа вы можете **сохранить результат в архив**, нажав соответствующую кнопку. Отчет станет доступен для выбора при следующем запуске.
         """)
 
-    # ### ИЗМЕНЕНО: Создаем папку для отчетов, если она не существует
-    if not os.path.exists(REPORTS_DIR):
-        os.makedirs(REPORTS_DIR)
+    supabase = init_supabase_client()
+    if not supabase:
+        st.stop()
 
     st.sidebar.header("🗂️ Источник данных")
-    # ### ИЗМЕНЕНО: Ищем файлы в новой папке REPORTS_DIR
-    report_files = [f for f in os.listdir(REPORTS_DIR) if f.endswith('.xlsx')]
-    data_source_options = ["Новый анализ"] + sorted(report_files, reverse=True)
-    selected_source = st.sidebar.selectbox("Выберите, что вы хотите сделать:", data_source_options)
+    report_files = get_report_list_from_supabase(supabase)
+    data_source_options = ["Новый анализ"] + report_files
+    selected_source = st.sidebar.selectbox("Выберите отчет из архива или начните новый анализ:", data_source_options)
 
     df = None
     uploaded_file = None
 
     if selected_source != "Новый анализ":
-        st.sidebar.success(f"Загружен отчет: {selected_source}")
-        # ### ИЗМЕНЕНО: Загружаем файл из папки REPORTS_DIR
-        report_file_path = os.path.join(REPORTS_DIR, selected_source)
-        df = load_data(report_file_path)
+        st.sidebar.success(f"Загружен отчет из архива: {selected_source}")
+        df = load_report_from_supabase(supabase, selected_source)
         st.session_state['current_file_name'] = selected_source
     else:
         st.sidebar.header("📄 Загрузка для нового анализа")
@@ -158,33 +193,22 @@ def main():
         st.info("Пожалуйста, загрузите файл для нового анализа или выберите готовый отчет в боковой панели.")
         return
 
-    api_key = None
     client = None
     if selected_source == "Новый анализ":
-        st.sidebar.header("🔐 Настройки API")
-        auth_method = st.sidebar.radio(
-            "Как предоставить API-ключ?",
-            ("Ввести вручную", "Загрузить из файла (.txt)")
-        )
-
-        if auth_method == "Ввести вручную":
-            api_key = st.sidebar.text_input("Ваш API-ключ DeepSeek:", type="password")
-        elif auth_method == "Загрузить из файла (.txt)":
-            key_file = st.sidebar.file_uploader("Выберите .txt файл с ключом", type=["txt"])
-            if key_file:
-                api_key = key_file.getvalue().decode("utf-8").strip()
-
-        if not api_key:
-            st.warning("Для нового анализа требуется API-ключ.")
+        try:
+            api_key = st.secrets["DEEPSEEK_API_KEY"]
+            client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
+        except KeyError:
+            st.sidebar.error("API-ключ DeepSeek не найден в настройках приложения.")
+            st.error("Ошибка конфигурации: отсутствует ключ `DEEPSEEK_API_KEY`. "
+                     "Пожалуйста, добавьте его в настройки секретов в Streamlit Cloud.")
             st.stop()
-        
-        client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
 
     session_key = f"df_processed_{st.session_state.get('current_file_name', 'default')}"
 
     if session_key not in st.session_state:
         if selected_source == "Новый анализ" and client:
-            with st.spinner('Выполняется параллельный анализ рефлексий... Это будет быстрее!'):
+            with st.spinner('Выполняется анализ рефлексий... Это займет некоторое время.'):
                 tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
                 async def gather_tasks():
                     return await asyncio.gather(*tasks)
@@ -202,17 +226,39 @@ def main():
 
     if selected_source == "Новый анализ" and uploaded_file:
         st.sidebar.header("💾 Сохранение")
-        if st.sidebar.button("Сохранить результат в отчет"):
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            base_filename = os.path.splitext(uploaded_file.name)[0]
-            report_filename = f"{base_filename}_processed_{timestamp}.xlsx"
-            # ### ИЗМЕНЕНО: Сохраняем файл в папку REPORTS_DIR
-            report_filepath = os.path.join(REPORTS_DIR, report_filename)
-            processed_df_to_save = st.session_state[session_key]
-            processed_df_to_save.to_excel(report_filepath, index=False)
-            st.sidebar.success(f"Анализ сохранен как:\n{report_filename}\nв папку main/data")
-            st.rerun()
+        if st.sidebar.button("Сохранить в архив"):
+            with st.spinner("Сохранение отчета в облако..."):
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+                base_filename = os.path.splitext(uploaded_file.name)[0]
+                report_filename = f"{base_filename}_processed_{timestamp}"
+                
+                processed_df_to_save = st.session_state[session_key].copy()
+                processed_df_to_save['report_name'] = report_filename
 
+                # --- ИСПРАВЛЕНИЕ ОШИБКИ JSON SERIALIZABLE ---
+                # 1. Явно преобразуем колонку с датой в строку формата ISO
+                if 'data' in processed_df_to_save.columns:
+                    processed_df_to_save['data'] = pd.to_datetime(processed_df_to_save['data']).dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+                # 2. Заменяем все "пустые" значения Python (NaN, NaT) на None (эквивалент NULL в базах данных)
+                df_for_upload = processed_df_to_save.replace({pd.NaT: None, np.nan: None})
+                
+                # 3. Конвертируем в список словарей
+                data_to_upload = df_for_upload.to_dict(orient='records')
+                # -----------------------------------------------
+                
+                try:
+                    supabase.table('reports').insert(data_to_upload).execute()
+                    st.sidebar.success(f"Анализ сохранен как:\n**{report_filename}**")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Ошибка сохранения в Supabase: {e}")
+
+    if df.empty:
+        st.error("Нет данных для отображения. Пожалуйста, измените фильтры или загрузите другой файл.")
+        return
+        
     filtered_df = df.copy()
 
     st.sidebar.header("📊 Фильтры")
@@ -234,10 +280,10 @@ def main():
         st.sidebar.warning("В файле отсутствуют корректные даты для фильтрации.")
 
     if filtered_df.empty:
-        st.error("Нет данных для отображения. Пожалуйста, измените фильтры или загрузите другой файл.")
+        st.error("Нет данных для отображения по выбранным фильтрам.")
         return
 
-    # --- Дальнейший код дашборда остается без изменений ---
+    # --- Дальнейший код дашборда без изменений ---
 
     st.header("Общая динамика и групповой анализ")
     daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
@@ -339,9 +385,12 @@ def main():
                 - **teamwork_feedback**: Краткая выжимка от ИИ по работе в команде.
                 - **organization_feedback**: Краткая выжимка от ИИ по организации и досугу.
                 """)
-            st.dataframe(student_df[['data', 'text', 'emotion', 'sentiment_10_point',
-                                    'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point',
-                                    'learning_feedback', 'teamwork_feedback', 'organization_feedback']])
+            display_columns = [
+                'data', 'text', 'emotion', 'sentiment_10_point',
+                'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point',
+                'learning_feedback', 'teamwork_feedback', 'organization_feedback'
+            ]
+            st.dataframe(student_df[[col for col in display_columns if col in student_df.columns]])
 
     if st.sidebar.checkbox("Показать полную таблицу с отфильтрованными результатами"):
         st.header("Полная таблица данных")
@@ -350,11 +399,10 @@ def main():
     st.header("Анализ \"Зоны риска\": участники с повторяющимся негативом")
     if 'sentiment_score' in filtered_df.columns:
         negative_reflections = filtered_df[filtered_df['sentiment_score'] < 0]
+        at_risk_users = pd.DataFrame(columns=['username', 'negative_count'])
         if not negative_reflections.empty:
             negative_counts = negative_reflections.groupby('username').size().reset_index(name='negative_count')
             at_risk_users = negative_counts[negative_counts['negative_count'] > 1].sort_values('negative_count', ascending=False)
-        else:
-            at_risk_users = pd.DataFrame(columns=['username', 'negative_count'])
 
         if not at_risk_users.empty:
             st.warning("Внимание! Выявлены участники с многократной негативной тональностью в рефлексиях за выбранный период.")
