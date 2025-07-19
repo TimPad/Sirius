@@ -175,7 +175,6 @@ def main():
     supabase = init_supabase_client()
     if not supabase: st.stop()
     
-    # ИЗМЕНЕНИЕ: Инициализируем API-клиент всегда, если есть ключ
     client = None
     try:
         client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"])
@@ -213,7 +212,6 @@ def main():
 
     session_key = f"df_processed_{st.session_state.get('current_file_name', 'default')}"
     if session_key not in st.session_state:
-        # Анализ запускается только для новых файлов и если есть клиент
         if selected_source == "Новый анализ" and client:
             with st.spinner('Выполняется анализ рефлексий...'):
                 async def gather_tasks(): return await asyncio.gather(*[analyze_reflection_with_deepseek(client, text) for text in df['text']])
@@ -264,11 +262,20 @@ def main():
         return
 
     st.sidebar.header("🎉 Дополнительные функции")
+    
     nomination_style = st.sidebar.text_input("Задайте стиль номинаций:", "Морская научно-техническая тематика")
     nomination_examples = st.sidebar.text_area("Примеры номинаций (каждый с новой строки):", "Капитан Гениальности\nИнженер Глубин\nАдмирал Идей")
-    
-    if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
-    if st.sidebar.button("Сгенерировать дружелюбные характеристики"): st.session_state.show_reflections = True; st.rerun()
+    if st.sidebar.button("Сгенерировать шуточные номинации"): 
+        st.session_state.show_nominations = True
+        st.rerun()
+
+    st.sidebar.markdown("---") 
+
+    reflection_style = st.sidebar.text_input("Задайте стиль характеристик:", "Дружелюбный и мотивирующий, с морскими метафорами")
+    reflection_examples = st.sidebar.text_area("Примеры характеристик (помогут задать тон):", "Этот юнга показал себя настоящим морским волком в решении задач, не боялся штормов критики и всегда держал курс на успех. Его вклад в проект подобен маяку, освещающему путь всей команде.")
+    if st.sidebar.button("Сгенерировать дружелюбные характеристики"): 
+        st.session_state.show_reflections = True
+        st.rerun()
     
     if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
         if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
@@ -278,6 +285,7 @@ def main():
 
     # --- 1. ВСЕГДА ОТОБРАЖАЕМ ОСНОВНОЙ ДАШБОРД ---
     st.header("Общая динамика и групповой анализ")
+
     daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
     agg_dict = {'avg_emotion': ('emotion', 'mean'), 'avg_sentiment_10_point': ('sentiment_10_point', 'mean'), 'avg_learning_sentiment': ('learning_sentiment_10_point', 'mean'), 'avg_teamwork_sentiment': ('teamwork_sentiment_10_point', 'mean'), 'avg_organization_sentiment': ('organization_sentiment_10_point', 'mean')}
     valid_agg_dict = {k: v for k, v in agg_dict.items() if v[0] in filtered_df.columns}
@@ -328,9 +336,28 @@ def main():
             st.warning("Выявлены участники с многократной негативной тональностью:")
             st.dataframe(risk_users)
         else: st.success("Участников с повторяющимся негативом не выявлено.")
+
+    # --- ИЗМЕНЕНИЕ: ДОБАВЛЕН БЛОК С ОБЩЕЙ СВОДНОЙ ТАБЛИЦЕЙ ---
+    st.header("Общая сводная таблица рефлексий")
+    st.markdown("Здесь представлены все отфильтрованные записи с результатами анализа. Таблицу можно сортировать, нажимая на заголовки столбцов.")
     
+    # Определяем порядок и состав столбцов для вывода
+    summary_display_cols = [
+        'username', 'data', 'text', 'emotion', 
+        'sentiment_10_point', 'learning_sentiment_10_point', 
+        'teamwork_sentiment_10_point', 'organization_sentiment_10_point',
+        'learning_feedback', 'teamwork_feedback', 'organization_feedback'
+    ]
+    # Отбираем только те столбцы, которые есть в датафрейме, чтобы избежать ошибок
+    available_cols = [col for col in summary_display_cols if col in filtered_df.columns]
+    
+    if available_cols:
+        st.dataframe(filtered_df[available_cols], use_container_width=True)
+    else:
+        st.info("Нет обработанных данных для отображения в сводной таблице.")
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
-    # ИЗМЕНЕНИЕ: Добавлена проверка на наличие `client`
     if st.session_state.get('show_nominations'):
         if not client:
             st.error("Генерация номинаций невозможна: API-ключ не настроен.")
@@ -344,13 +371,14 @@ def main():
 
     if st.session_state.get('show_reflections'):
         if not client:
-            st.error("Генерация рефлексий невозможна: API-ключ не настроен.")
+            st.error("Генерация характеристик невозможна: API-ключ не настроен.")
         else:
             st.header("🌟 Дружелюбные характеристики и напутствия")
-            reflections_key = f"reflections_{session_key}"
+            reflections_key = f"reflections_{session_key}_{hash(reflection_style)}_{hash(reflection_examples)}"
             if reflections_key not in st.session_state:
-                with st.spinner("Пишем дружеские послания..."):
-                    st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client)
+                with st.spinner("Пишем дружеские послания в заданном стиле..."):
+                    st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client, reflection_style, reflection_examples)
+            
             df_to_display = st.session_state[reflections_key].copy()
             df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
             st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
