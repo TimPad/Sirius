@@ -123,7 +123,8 @@ async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str) -> 
         print(f"Error generating nomination for {username}: {e}")
         return default_result
 
-@st.cache_data(show_spinner=False)
+# ИСПРАВЛЕНИЕ: Добавлен hash_funcs для игнорирования объекта client
+@st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 async def generate_nominations(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Генерирует шуточные номинации для каждого участника на основе всех его рефлексий."""
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
@@ -166,7 +167,8 @@ async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text:
         print(f"Error generating friendly reflection for {username}: {e}")
         return default_result
 
-@st.cache_data(show_spinner=False)
+# ИСПРАВЛЕНИЕ: Добавлен hash_funcs для игнорирования объекта client
+@st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 async def generate_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Генерирует дружелюбные рефлексии и напутствия для каждого участника."""
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
@@ -239,7 +241,7 @@ def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFra
 
 
 # ----------------------
-# 8. Основная логика и дашборд на Streamlit (ИЗМЕНЕНО)
+# 8. Основная логика и дашборд на Streamlit (без изменений, кроме вызовов)
 # ----------------------
 def main():
     st.set_page_config(layout="wide")
