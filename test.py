@@ -268,7 +268,7 @@ def main():
     nomination_examples = st.sidebar.text_area("Примеры номинаций (каждый с новой строки):", "Капитан Гениальности\nИнженер Глубин\nАдмирал Идей")
     
     if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
-    if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True; st.rerun()
+    if st.sidebar.button("Сгенерировать дружелюбные характеристики"): st.session_state.show_reflections = True; st.rerun()
     
     if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
         if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
@@ -346,7 +346,7 @@ def main():
         if not client:
             st.error("Генерация рефлексий невозможна: API-ключ не настроен.")
         else:
-            st.header("🌟 Дружелюбные рефлексии и напутствия")
+            st.header("🌟 Дружелюбные характеристики и напутствия")
             reflections_key = f"reflections_{session_key}"
             if reflections_key not in st.session_state:
                 with st.spinner("Пишем дружеские послания..."):
