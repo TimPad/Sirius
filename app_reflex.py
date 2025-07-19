@@ -343,6 +343,8 @@ def main():
             st.warning("Выявлены участники с многократной негативной тональностью:")
             st.dataframe(risk_users)
         else: st.success("Участников с повторяющимся негативом не выявлено.")
+    st.header("Сводная таблица рефлексий")
+    st.dataframe(df)
     
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
     if st.session_state.get('show_nominations'):
