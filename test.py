@@ -72,40 +72,39 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
 # ----------------------
 # 5. Новые функции генерации
 # ----------------------
-async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str) -> dict:
+async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str, style: str, examples: str) -> dict:
     prompt = (
-        "Ты — ИИ-ассистент, анализирующий рефлексии школьников с морской научно-технической проектной смены. "
-        f"На основе рефлексий участника по имени {username}: \"{text}\", присвой шуточную номинацию в морской тематике "
-        "(например, 'Капитан Гениальности', 'Инженер Глубин','Навигатор Новых Идей') и дай краткое обоснование (1-2 предложения). "
-        "Твоя цель — поднять настроение, поощрить усилия и подчеркнуть сильные стороны участника. "
+        f"Ты — креативный ИИ-ассистент. Твоя задача — проанализировать рефлексии школьника и придумать для него шуточную номинацию.\n"
+        f"Стиль номинации: {style}.\n"
+        f"Вот примеры для вдохновения:\n{examples}\n\n"
+        f"На основе рефлексий участника по имени {username}: \"{text}\", присвой ему уникальную шуточную номинацию в заданном стиле и дай краткое (1-2 предложения) позитивное обоснование. "
         "Верни JSON-объект: {\"nomination\": str, \"justification\": str}."
     )
     default_result = {"nomination": "Морской Исследователь", "justification": "За активное участие в проекте!"}
     try:
-        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.7, response_format={"type": "json_object"})
+        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.8, response_format={"type": "json_object"})
         result = json.loads(response.choices[0].message.content)
         return result if 'nomination' in result and 'justification' in result else default_result
     except Exception as e:
         print(f"Error generating nomination for {username}: {e}")
         return default_result
 
-async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
+async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
-    tasks = [_get_one_nomination(client, row['username'], row['text']) for _, row in user_reflections.iterrows()]
+    tasks = [_get_one_nomination(client, row['username'], row['text'], style, examples) for _, row in user_reflections.iterrows()]
     results = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(results)
     return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
 
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
-def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
-    return asyncio.run(_generate_nominations_async(_df, client))
+def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
+    return asyncio.run(_generate_nominations_async(_df, client, style, examples))
 
 async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str) -> dict:
     prompt = (
         "Ты — ИИ-ассистент, суммирующий рефлексии школьников с морской научно-технической проектной смены. "
-        f"На основе рефлексий участника и инсайтов на основе этих рефлексий по имени {username}: \"{text}\", создай дружелюбное, шуточное резюме (3-4 предложения) "
+        f"На основе рефлексий участника по имени {username}: \"{text}\", создай дружелюбное, шуточное резюме (2-3 предложения) "
         "и позитивное напутствие (1-2 предложения). Тон должен быть позитивным, не обидным, с учетом морской тематики. "
-        "например (Мы верим, что твой корабль знаний возьмёт курс на великие открытия — держи штурвал уверенно!)"
         "Верни JSON-объект: {\"reflection\": str, \"encouragement\": str}."
     )
     default_result = {"reflection": "Ты отлично справляешься с проектами!", "encouragement": "Продолжай в том же духе и покоряй новые горизонты!"}
@@ -171,19 +170,19 @@ def main():
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
     with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=False):
-        st.markdown("""
-        **Цель дашборда** — помочь педагогам и кураторам быстро оценить эмоциональное состояние группы, выявить общие тенденции и определить учащихся, требующих особого внимания, на основе их письменных рефлексий.
-
-        **Как это работает?**
-        1.  Для **нового анализа** загрузите Excel-файл с текстами рефлексий.
-        2.  Чтобы посмотреть **старый отчет**, выберите его из выпадающего списка. Данные загрузятся из облачного архива.
-        3.  При новом анализе искусственный интеллект (DeepSeek) анализирует каждый текст.
-        4.  После анализа вы можете **сохранить результат в архив**, нажав соответствующую кнопку. Отчет станет доступен для выбора при следующем запуске.
-        5.  В **дополнительных функциях** можно сгенерировать шуточные номинации и персональные рефлексии для участников.
-        """)
+        st.markdown("""...""") # Скрыто для краткости
 
     supabase = init_supabase_client()
     if not supabase: st.stop()
+    
+    # ИЗМЕНЕНИЕ: Инициализируем API-клиент всегда, если есть ключ
+    client = None
+    try:
+        client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"])
+    except KeyError:
+        st.sidebar.warning("API-ключ DeepSeek не найден. Функции генерации будут недоступны.")
+    except Exception as e:
+        st.sidebar.error(f"Ошибка инициализации API: {e}")
 
     st.sidebar.header("🗂️ Источник данных")
     report_files = get_report_list_from_supabase(supabase)
@@ -212,10 +211,9 @@ def main():
         st.info("Пожалуйста, загрузите файл или выберите отчет.")
         return
 
-    client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"]) if selected_source == "Новый анализ" else None
-
     session_key = f"df_processed_{st.session_state.get('current_file_name', 'default')}"
     if session_key not in st.session_state:
+        # Анализ запускается только для новых файлов и если есть клиент
         if selected_source == "Новый анализ" and client:
             with st.spinner('Выполняется анализ рефлексий...'):
                 async def gather_tasks(): return await asyncio.gather(*[analyze_reflection_with_deepseek(client, text) for text in df['text']])
@@ -266,9 +264,11 @@ def main():
         return
 
     st.sidebar.header("🎉 Дополнительные функции")
-    if client:
-        if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
-        if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True; st.rerun()
+    nomination_style = st.sidebar.text_input("Задайте стиль номинаций:", "Морская научно-техническая тематика")
+    nomination_examples = st.sidebar.text_area("Примеры номинаций (каждый с новой строки):", "Капитан Гениальности\nИнженер Глубин\nАдмирал Идей")
+    
+    if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
+    if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True; st.rerun()
     
     if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
         if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
@@ -328,25 +328,32 @@ def main():
             st.warning("Выявлены участники с многократной негативной тональностью:")
             st.dataframe(risk_users)
         else: st.success("Участников с повторяющимся негативом не выявлено.")
-
+    
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
+    # ИЗМЕНЕНИЕ: Добавлена проверка на наличие `client`
     if st.session_state.get('show_nominations'):
-        st.header("🏆 Шуточные номинации участников")
-        nominations_key = f"nominations_{session_key}"
-        if nominations_key not in st.session_state:
-            with st.spinner("Создаем номинации..."):
-                st.session_state[nominations_key] = get_cached_nominations(filtered_df, client)
-        st.dataframe(st.session_state[nominations_key], use_container_width=True)
+        if not client:
+            st.error("Генерация номинаций невозможна: API-ключ не настроен.")
+        else:
+            st.header("🏆 Шуточные номинации участников")
+            nominations_key = f"nominations_{session_key}_{hash(nomination_style)}_{hash(nomination_examples)}"
+            if nominations_key not in st.session_state:
+                with st.spinner("Создаем номинации по вашему стилю..."):
+                    st.session_state[nominations_key] = get_cached_nominations(filtered_df, client, nomination_style, nomination_examples)
+            st.dataframe(st.session_state[nominations_key], use_container_width=True)
 
     if st.session_state.get('show_reflections'):
-        st.header("🌟 Дружелюбные рефлексии и напутствия")
-        reflections_key = f"reflections_{session_key}"
-        if reflections_key not in st.session_state:
-            with st.spinner("Пишем дружеские послания..."):
-                st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client)
-        df_to_display = st.session_state[reflections_key].copy()
-        df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
-        st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
+        if not client:
+            st.error("Генерация рефлексий невозможна: API-ключ не настроен.")
+        else:
+            st.header("🌟 Дружелюбные рефлексии и напутствия")
+            reflections_key = f"reflections_{session_key}"
+            if reflections_key not in st.session_state:
+                with st.spinner("Пишем дружеские послания..."):
+                    st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client)
+            df_to_display = st.session_state[reflections_key].copy()
+            df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
+            st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
 
 if __name__ == "__main__":
     main()
