@@ -3,7 +3,6 @@
 import subprocess
 import sys
 
-
 # ----------------------
 # 2. Импорты и константы
 # ----------------------
@@ -72,13 +71,12 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
 # ----------------------
 # 5. Новые функции генерации
 # ----------------------
-# ИЗМЕНЕНИЕ: Функция теперь принимает стиль и примеры
 async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str, style: str, examples: str) -> dict:
     prompt = (
         f"Ты — креативный ИИ-ассистент. Твоя задача — проанализировать рефлексии школьника и придумать для него шуточную номинацию.\n"
         f"Стиль номинации: {style}.\n"
         f"Вот примеры для вдохновения:\n{examples}\n\n"
-        f"На основе рефлексий участника по имени {username}: \"{text}\", присвой ему уникальную шуточную номинацию в заданном стиле и дай краткое (1-2 предложения) позитивное обоснование. "
+        f"На основе рефлексий участника по имени {username}: \"{text}\", присвой ему уникальную шуточную номинацию в заданном стиле и дай краткое (1-2 предложения) позитивное обоснование обезличенное. "
         "Верни JSON-объект: {\"nomination\": str, \"justification\": str}."
     )
     default_result = {"nomination": "Морской Исследователь", "justification": "За активное участие в проекте!"}
@@ -90,7 +88,6 @@ async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str, sty
         print(f"Error generating nomination for {username}: {e}")
         return default_result
 
-# ИЗМЕНЕНИЕ: Функция "пробрасывает" стиль и примеры дальше
 async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
     tasks = [_get_one_nomination(client, row['username'], row['text'], style, examples) for _, row in user_reflections.iterrows()]
@@ -98,17 +95,19 @@ async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI, st
     results_df = pd.DataFrame(results)
     return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
 
-# ИЗМЕНЕНИЕ: Декоратор теперь будет кешировать по df, client, style и examples
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
     return asyncio.run(_generate_nominations_async(_df, client, style, examples))
 
-# Функции для генерации рефлексий остаются без изменений
-async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str) -> dict:
+# ИЗМЕНЕНИЕ: Обновляем функцию для принятия стиля и примеров
+async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str, style: str, examples: str) -> dict:
     prompt = (
-        "Ты — ИИ-ассистент, суммирующий рефлексии школьников с морской научно-технической проектной смены. "
-        f"На основе рефлексий участника по имени {username}: \"{text}\", создай дружелюбное, шуточное резюме (2-3 абзаца) "
-        "и позитивное напутствие для поддержки и вдохновления на будущее в жизни, учебе и проектах (1 абзац). Тон должен быть позитивным, не обидным, с учетом морской тематики. "
+        f"Ты — креативный ИИ-ассистент, который пишет характеристики для школьников на основе их рефлексий.\n"
+        f"Стиль характеристики: {style}.\n"
+        f"Вот примеры для вдохновения (они помогут задать правильный тон и формат):\n{examples}\n\n"
+        f"На основе рефлексий участника по имени {username}: \"{text}\", напиши характеристику в заданном стиле. "
+        "Она должна состоять из 2-3 абзацев с инсайтами из рефлексий и 1 абзаца с позитивным напутствием. "
+        "Тон должен быть позитивным, не обидным, мотивировать на дальнейшее развитие в учебе, проектной деятельности и в жизни. "
         "Верни JSON-объект: {\"reflection\": str, \"encouragement\": str}."
     )
     default_result = {"reflection": "Ты отлично справляешься с проектами!", "encouragement": "Продолжай в том же духе и покоряй новые горизонты!"}
@@ -120,16 +119,18 @@ async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text:
         print(f"Error generating friendly reflection for {username}: {e}")
         return default_result
 
-async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
+# ИЗМЕНЕНИЕ: Обновляем функцию для принятия и передачи стиля и примеров
+async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
-    tasks = [_get_one_friendly_reflection(client, row['username'], row['text']) for _, row in user_reflections.iterrows()]
+    tasks = [_get_one_friendly_reflection(client, row['username'], row['text'], style, examples) for _, row in user_reflections.iterrows()]
     results = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(results)
     return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'reflection': 'Рефлексия', 'encouragement': 'Пожелание'})
 
+# ИЗМЕНЕНИЕ: Обновляем кэшируемую функцию-обертку
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
-def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
-    return asyncio.run(_generate_friendly_reflections_async(_df, client))
+def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
+    return asyncio.run(_generate_friendly_reflections_async(_df, client, style, examples))
 
 # ----------------------
 # 6. Вспомогательные функции
@@ -178,6 +179,14 @@ def main():
 
     supabase = init_supabase_client()
     if not supabase: st.stop()
+    
+    client = None
+    try:
+        client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"])
+    except KeyError:
+        st.sidebar.warning("API-ключ DeepSeek не найден. Функции генерации будут недоступны.")
+    except Exception as e:
+        st.sidebar.error(f"Ошибка инициализации API: {e}")
 
     st.sidebar.header("🗂️ Источник данных")
     report_files = get_report_list_from_supabase(supabase)
@@ -206,8 +215,6 @@ def main():
         st.info("Пожалуйста, загрузите файл или выберите отчет.")
         return
 
-    client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"]) if selected_source == "Новый анализ" else None
-
     session_key = f"df_processed_{st.session_state.get('current_file_name', 'default')}"
     if session_key not in st.session_state:
         if selected_source == "Новый анализ" and client:
@@ -227,8 +234,21 @@ def main():
         st.sidebar.header("💾 Сохранение")
         if st.sidebar.button("Сохранить в архив"):
             with st.spinner("Сохранение отчета в облако..."):
-                # Код сохранения
-                pass
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+                base_filename = os.path.splitext(uploaded_file.name)[0]
+                report_filename = f"{base_filename}_processed_{timestamp}"
+                df_to_save = st.session_state[session_key].copy()
+                df_to_save['report_name'] = report_filename
+                if 'data' in df_to_save.columns:
+                    df_to_save['data'] = pd.to_datetime(df_to_save['data']).dt.strftime('%Y-%m-%dT%H:%M:%S')
+                data_to_upload = df_to_save.replace({pd.NaT: None, np.nan: None}).to_dict(orient='records')
+                try:
+                    supabase.table('reports').upsert(data_to_upload, on_conflict='username,data').execute()
+                    st.sidebar.success(f"Анализ сохранен как:\n**{report_filename}**")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Ошибка сохранения в Supabase: {e}")
 
     if df.empty:
         st.warning("Нет данных для отображения.")
@@ -248,19 +268,20 @@ def main():
 
     st.sidebar.header("🎉 Дополнительные функции")
     
-    # ИЗМЕНЕНИЕ: Добавлены поля для стиля и примеров
-    nomination_style = st.sidebar.text_input(
-        "Задайте стиль номинаций:",
-        "Морская научно-техническая тематика"
-    )
-    nomination_examples = st.sidebar.text_area(
-        "Примеры номинаций (каждый с новой строки):",
-        "Капитан Гениальности\nИнженер Глубин\nАдмирал Идей\nШтурман Прорывных Решений\nБоцман Алгоритмов"
-    )
-    
-    if client:
-        if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
-        if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True; st.rerun()
+    # ИЗМЕНЕНИЕ: Добавляем UI-элементы для стилизации характеристик
+    nomination_style = st.sidebar.text_input("Задайте стиль номинаций:", "Морская научно-техническая тематика")
+    nomination_examples = st.sidebar.text_area("Примеры номинаций (каждый с новой строки):", "Капитан Гениальности\nИнженер Глубин\nАдмирал Идей")
+    if st.sidebar.button("Сгенерировать шуточные номинации"): 
+        st.session_state.show_nominations = True
+        st.rerun()
+
+    st.sidebar.markdown("---") # Разделитель для наглядности
+
+    reflection_style = st.sidebar.text_input("Задайте стиль характеристик:", "Дружелюбный и мотивирующий, с морскими метафорами")
+    reflection_examples = st.sidebar.text_area("Примеры характеристик (помогут задать тон):", "Этот юнга показал себя настоящим морским волком в решении задач, не боялся штормов критики и всегда держал курс на успех. Его вклад в проект подобен маяку, освещающему путь всей команде.")
+    if st.sidebar.button("Сгенерировать дружелюбные характеристики"): 
+        st.session_state.show_reflections = True
+        st.rerun()
     
     if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
         if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
@@ -270,7 +291,8 @@ def main():
 
     # --- 1. ВСЕГДА ОТОБРАЖАЕМ ОСНОВНОЙ ДАШБОРД ---
     st.header("Общая динамика и групповой анализ")
-    # ... (весь код дашборда восстановлен)
+    # (весь код дашборда остается без изменений)
+    # ...
     daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
     agg_dict = {'avg_emotion': ('emotion', 'mean'), 'avg_sentiment_10_point': ('sentiment_10_point', 'mean'), 'avg_learning_sentiment': ('learning_sentiment_10_point', 'mean'), 'avg_teamwork_sentiment': ('teamwork_sentiment_10_point', 'mean'), 'avg_organization_sentiment': ('organization_sentiment_10_point', 'mean')}
     valid_agg_dict = {k: v for k, v in agg_dict.items() if v[0] in filtered_df.columns}
@@ -324,24 +346,30 @@ def main():
     
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
     if st.session_state.get('show_nominations'):
-        st.header("🏆 Шуточные номинации участников")
-        # ИЗМЕНЕНИЕ: Формируем ключ для session_state, чтобы он был уникальным для разных стилей
-        nominations_key = f"nominations_{session_key}_{hash(nomination_style)}_{hash(nomination_examples)}"
-        if nominations_key not in st.session_state:
-            with st.spinner("Создаем номинации по вашему стилю..."):
-                # ИЗМЕНЕНИЕ: Передаем стиль и примеры в функцию
-                st.session_state[nominations_key] = get_cached_nominations(filtered_df, client, nomination_style, nomination_examples)
-        st.dataframe(st.session_state[nominations_key], use_container_width=True)
+        if not client:
+            st.error("Генерация номинаций невозможна: API-ключ не настроен.")
+        else:
+            st.header("🏆 Шуточные номинации участников")
+            nominations_key = f"nominations_{session_key}_{hash(nomination_style)}_{hash(nomination_examples)}"
+            if nominations_key not in st.session_state:
+                with st.spinner("Создаем номинации по вашему стилю..."):
+                    st.session_state[nominations_key] = get_cached_nominations(filtered_df, client, nomination_style, nomination_examples)
+            st.dataframe(st.session_state[nominations_key], use_container_width=True)
 
     if st.session_state.get('show_reflections'):
-        st.header("🌟 Дружелюбные характеристики и напутствия")
-        reflections_key = f"reflections_{session_key}"
-        if reflections_key not in st.session_state:
-            with st.spinner("Пишем дружеские послания..."):
-                st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client)
-        df_to_display = st.session_state[reflections_key].copy()
-        df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
-        st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
+        if not client:
+            st.error("Генерация характеристик невозможна: API-ключ не настроен.")
+        else:
+            st.header("🌟 Дружелюбные характеристики и напутствия")
+            # ИЗМЕНЕНИЕ: Обновляем ключ кэша и вызов функции
+            reflections_key = f"reflections_{session_key}_{hash(reflection_style)}_{hash(reflection_examples)}"
+            if reflections_key not in st.session_state:
+                with st.spinner("Пишем дружеские послания в заданном стиле..."):
+                    st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client, reflection_style, reflection_examples)
+            
+            df_to_display = st.session_state[reflections_key].copy()
+            df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
+            st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
 
 if __name__ == "__main__":
     main()
