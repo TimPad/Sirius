@@ -93,7 +93,7 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
         return error_result
 
 # ----------------------
-# НОВЫЕ ФУНКЦИИ ГЕНЕРАЦИИ (ИСПРАВЛЕНО)
+# НОВЫЕ ФУНКЦИИ ГЕНЕРАЦИИ
 # ----------------------
 
 async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str) -> dict:
@@ -123,7 +123,6 @@ async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str) -> 
         print(f"Error generating nomination for {username}: {e}")
         return default_result
 
-# ИСПРАВЛЕНИЕ: Это внутренняя async-функция без декоратора
 async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Асинхронно генерирует шуточные номинации для каждого участника."""
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
@@ -139,7 +138,6 @@ async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI) ->
     final_df = final_df.rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
     return final_df
 
-# ИСПРАВЛЕНИЕ: Это синхронная функция-обертка, которую мы кешируем
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Запускает асинхронную генерацию номинаций и кеширует результат (DataFrame)."""
@@ -171,7 +169,6 @@ async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text:
         print(f"Error generating friendly reflection for {username}: {e}")
         return default_result
 
-# ИСПРАВЛЕНИЕ: Это внутренняя async-функция без декоратора
 async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Асинхронно генерирует дружелюбные рефлексии и напутствия для каждого участника."""
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
@@ -187,7 +184,6 @@ async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncO
     final_df = final_df.rename(columns={'username': 'ФИО', 'reflection': 'Рефлексия', 'encouragement': 'Пожелание'})
     return final_df
 
-# ИСПРАВЛЕНИЕ: Это синхронная функция-обертка, которую мы кешируем
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     """Запускает асинхронную генерацию рефлексий и кеширует результат (DataFrame)."""
@@ -375,11 +371,10 @@ def main():
         st.error("Нет данных для отображения по выбранным фильтрам.")
         return
 
-    # --- НОВЫЙ БЛОК: Управление отображением ---
+    # --- Управление отображением ---
     if 'view_mode' not in st.session_state:
         st.session_state.view_mode = 'dashboard'
 
-    # Кнопки для переключения вида в боковой панели
     st.sidebar.header("🎉 Дополнительные функции")
     if st.sidebar.button("Сгенерировать шуточные номинации"):
         st.session_state.view_mode = 'nominations'
@@ -389,7 +384,6 @@ def main():
         st.session_state.view_mode = 'reflections'
         st.rerun()
 
-    # Кнопка возврата на главный дашборд
     if st.session_state.view_mode != 'dashboard':
         if st.sidebar.button("◀️ Вернуться к основному дашборду"):
             st.session_state.view_mode = 'dashboard'
@@ -397,9 +391,8 @@ def main():
             
     # --- Основной контент в зависимости от режима ---
     if st.session_state.view_mode == 'dashboard':
-        # --- Начало оригинального блока отображения дашборда ---
+        # --- НАЧАЛО ВОССТАНОВЛЕННОГО БЛОКА ДАШБОРДА ---
         st.header("Общая динамика и групповой анализ")
-        # ... (здесь код дашборда без изменений) ...
         daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
         agg_dict = {
             'avg_emotion': ('emotion', 'mean'),
@@ -412,12 +405,111 @@ def main():
         if valid_agg_dict:
             daily_df = daily_groups.agg(**valid_agg_dict).reset_index()
             daily_df.rename(columns={'data': 'Дата'}, inplace=True)
+
             if not daily_df.empty:
                 daily_df.sort_values('Дата', inplace=True)
-                # ... остальной код графиков ...
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Общая тональность vs. Самооценка")
+                    fig = px.line(
+                        daily_df, x='Дата', y=['avg_sentiment_10_point', 'avg_emotion'],
+                        labels={'value': 'Оценка (1-10)', 'variable': 'Метрика'},
+                        title='Сравнение тональности и самооценки'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    st.subheader("Детализация тональности по аспектам")
+                    fig_details = px.line(
+                        daily_df, x='Дата', y=['avg_learning_sentiment', 'avg_teamwork_sentiment', 'avg_organization_sentiment'],
+                        labels={'value': 'Оценка (1-10)', 'variable': 'Аспект'},
+                        title='Динамика тональности по аспектам'
+                    )
+                    new_names = {'avg_learning_sentiment': 'Учёба', 'avg_teamwork_sentiment': 'Команда', 'avg_organization_sentiment': 'Организация'}
+                    fig_details.for_each_trace(lambda t: t.update(name = new_names.get(t.name, t.name)))
+                    st.plotly_chart(fig_details, use_container_width=True)
+
+        st.subheader("Тепловая карта тональности группы")
+        if 'sentiment_10_point' in filtered_df.columns:
+            heatmap_data = filtered_df.pivot_table(
+                index='username',
+                columns=filtered_df['data'].dt.date,
+                values='sentiment_10_point',
+                aggfunc='mean'
+            )
+            if not heatmap_data.empty:
+                fig_heatmap = px.imshow(
+                    heatmap_data,
+                    labels=dict(x="Дата", y="Ученик", color="Тональность"),
+                    title="Общая тональность (1-10) по дням для каждого ученика",
+                    color_continuous_scale='RdYlGn',
+                    aspect="auto"
+                )
+                st.plotly_chart(fig_heatmap, use_container_width=True)
+            else:
+                st.info("Недостаточно данных для построения тепловой карты.")
+        else:
+            st.info("Данные для тепловой карты (sentiment_10_point) отсутствуют.")
+
         st.header("Анализ по отдельным учащимся")
-        # ... остальной код дашборда ...
-        # --- Конец оригинального блока отображения дашборда ---
+        student_list = sorted(filtered_df['username'].unique())
+        if student_list:
+            student = st.selectbox("Выберите ученика:", student_list)
+            if student:
+                student_df = filtered_df[filtered_df['username'] == student].sort_values('data')
+                col1, col2 = st.columns([3, 2])
+                with col1:
+                    st.subheader(f"Динамика оценок для {student}")
+                    fig2 = px.line(
+                        student_df, x='data', y=['sentiment_10_point', 'emotion'],
+                        labels={'value': 'Оценка (1-10)', 'data': 'Дата'},
+                        title=f'Тональность vs. Самооценка'
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+                with col2:
+                    st.subheader(f"Профиль ученика")
+                    categories = ['Самооценка', 'Учёба', 'Команда', 'Организация']
+                    values = [
+                        student_df['emotion'].mean(),
+                        student_df['learning_sentiment_10_point'].mean(),
+                        student_df['teamwork_sentiment_10_point'].mean(),
+                        student_df['organization_sentiment_10_point'].mean()
+                    ]
+                    fig_radar = go.Figure()
+                    fig_radar.add_trace(go.Scatterpolar(r=values, theta=categories, fill='toself', name='Средняя оценка'))
+                    fig_radar.update_layout(
+                        polar=dict(radialaxis=dict(visible=True, range=[1, 10])),
+                        showlegend=False,
+                        title=f"Средние оценки для {student}",
+                        margin=dict(l=40, r=40, t=80, b=40)
+                    )
+                    st.plotly_chart(fig_radar, use_container_width=True)
+
+                st.subheader("Детальная таблица рефлексий")
+                display_columns = [
+                    'data', 'text', 'emotion', 'sentiment_10_point',
+                    'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point',
+                    'learning_feedback', 'teamwork_feedback', 'organization_feedback'
+                ]
+                st.dataframe(student_df[[col for col in display_columns if col in student_df.columns]])
+
+        if st.sidebar.checkbox("Показать полную таблицу с отфильтрованными результатами"):
+            st.header("Полная таблица данных")
+            st.dataframe(filtered_df)
+
+        st.header("Анализ \"Зоны риска\": участники с повторяющимся негативом")
+        if 'sentiment_score' in filtered_df.columns:
+            negative_reflections = filtered_df[filtered_df['sentiment_score'] < 0]
+            if not negative_reflections.empty:
+                negative_counts = negative_reflections.groupby('username').size().reset_index(name='negative_count')
+                at_risk_users = negative_counts[negative_counts['negative_count'] > 1].sort_values('negative_count', ascending=False)
+                if not at_risk_users.empty:
+                    st.warning("Внимание! Выявлены участники с многократной негативной тональностью в рефлексиях за выбранный период.")
+                    st.dataframe(at_risk_users)
+                else:
+                    st.success("За выбранный период не выявлено участников, у которых тональность рефлексий была бы негативной более одного раза.")
+            else:
+                st.success("Негативных рефлексий за выбранный период не найдено.")
+        # --- КОНЕЦ ВОССТАНОВЛЕННОГО БЛОКА ДАШБОРДА ---
 
     elif st.session_state.view_mode == 'nominations':
         st.header("🏆 Шуточные номинации участников")
@@ -428,7 +520,6 @@ def main():
         else:
             if nominations_key not in st.session_state:
                 with st.spinner("Создаем номинации... Это может занять несколько минут..."):
-                    # ИСПРАВЛЕНИЕ: Вызываем новую синхронную кешированную функцию
                     nominations_df = get_cached_nominations(filtered_df, client)
                     st.session_state[nominations_key] = nominations_df
             
@@ -443,7 +534,6 @@ def main():
         else:
             if reflections_key not in st.session_state:
                 with st.spinner("Пишем дружеские послания... Это может занять несколько минут..."):
-                    # ИСПРАВЛЕНИЕ: Вызываем новую синхронную кешированную функцию
                     reflections_df = get_cached_friendly_reflections(filtered_df, client)
                     st.session_state[reflections_key] = reflections_df
 
