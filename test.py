@@ -2,9 +2,7 @@
 # Убедитесь, что все зависимости установлены. Выполните в терминале:
 # pip install streamlit pandas plotly supabase openai openpyxl
 # ----------------------
-import subprocess
-import sys
-import io # для работы с файлами в памяти
+import io
 import os
 import json
 import asyncio
@@ -44,15 +42,6 @@ def to_excel(df: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Характеристики')
     return output.getvalue()
-
-def run_async(coro):
-    """Безопасно запускает асинхронную корутину в окружении Streamlit."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
 
 def convert_sentiment_to_10_point(score: float) -> float:
     """Конвертирует тональность из диапазона [-1, 1] в [1, 10]."""
@@ -106,10 +95,9 @@ def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFra
 
 async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> dict:
     """Асинхронно анализирует текст рефлексии для получения структурированных данных."""
-    # ... (код этой функции без изменений)
     error_result = {"sentiment_score": 0.0, "learning_feedback": "N/A", "teamwork_feedback": "N/A", "organization_feedback": "N/A", "learning_sentiment_score": 0.0, "teamwork_sentiment_score": 0.0, "organization_sentiment_score": 0.0}
     if not text or not isinstance(text, str) or not text.strip(): return error_result
-    prompt = ("Ты — ИИ-ассистент... (полный текст вашего промпта)") # Оставил сокращенно для читаемости
+    prompt = ("Ты — ИИ-ассистент для анализа текстов рефлексии. Проанализируй рефлексию школьника. Твоя задача — вернуть JSON-объект со следующими ключами:\n1. 'sentiment_score': общая тональность текста, число от -1.0 (негатив) до 1.0 (позитив).\n2. 'learning_feedback': краткая выжимка (1-2 предложения) из текста об оценке учебного процесса.\n3. 'teamwork_feedback': краткая выжимка (1-2 предложения) об оценке работы в команде.\n4. 'organization_feedback': краткая выжимка (1-2 предложения) об оценке организационных и досуговых моментов.\n5. 'learning_sentiment_score': тональность ТОЛЬКО части про учёбу (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n6. 'teamwork_sentiment_score': тональность ТОЛЬКО части про команду (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n7. 'organization_sentiment_score': тональность ТОЛЬКО части про организацию (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n\nЕсли какой-то аспект в тексте не упоминается, для ключей feedback оставь пустую строку, а для ключей sentiment_score верни 0.0.\n\n" f"Текст для анализа: \"{text}\"")
     try:
         response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.2, response_format={"type": "json_object"})
         result = json.loads(response.choices[0].message.content)
@@ -123,7 +111,7 @@ async def generate_nomination_with_llm(client: AsyncOpenAI, reflections: str) ->
     """Генерирует шуточную номинацию на основе рефлексий участника."""
     if not reflections or not reflections.strip():
         reflections = "Участник был слишком погружен в великие научные дела и не оставил рефлексий."
-    prompt = ( "Ты — креативный копирайтер для детского научного лагеря... (полный текст вашего промпта)" ) # Оставил сокращенно
+    prompt = ("Ты — креативный копирайтер для детского научного лагеря. Твоя задача — придумать шуточную номинацию для участника на основе его рефлексий. Номинация должна быть связана с наукой, проектами, исследованиями, кодом, данными и т.д.\n\nПравила:\n1. Если в тексте есть слова про трудности, борьбу с ошибками, дебаггинг — придумай номинацию про упорство (например, 'Повелитель Дебага', 'Укротитель Багов').\n2. Если говорится про идеи, креативность, дизайн — про это ('Генератор Гениальных Гипотез', 'Магистр Креатива').\n3. Если упор на данные, анализ, графики — про аналитику ('Лорд Аналитических Данных', 'Виртуоз Визуализаций').\n4. Если текст о таинственности или его нет — обыграй это ('Хранитель Научных Тайн', 'Агент \"Ноль Комментариев\"').\n\nВерни ТОЛЬКО название номинации в виде одной строки. Без кавычек и лишних слов.\n\n" f"Текст рефлексии для анализа: \"{reflections}\"")
     try:
         response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=50)
         return response.choices[0].message.content.strip().strip('"')
@@ -135,8 +123,8 @@ async def generate_character_description_with_llm(client: AsyncOpenAI, name: str
     """Генерирует шуточную, но добрую характеристику на участника."""
     is_empty_reflection = not reflections or not reflections.strip()
     if is_empty_reflection:
-        reflections = "Рефлексии отсутствуют..." # Полный текст вашего "пустого" случая
-    prompt = ( f"Ты — добрый и мудрый наставник... (полный текст вашего промпта с именем {name})" ) # Оставил сокращенно
+        reflections = "Рефлексии отсутствуют. Вероятно, участник был засекреченным агентом, чья миссия была настолько важна, что не оставляла следов в виде текста."
+    prompt = (f"Ты — добрый и мудрый наставник в научном лагере. Твоя задача — написать шуточную, но очень добрую и поддерживающую характеристику для участника по имени {name} на основе его рефлексий. Текст должен быть в формате Markdown.\n\nСтруктура ответа:\n1.  **Первый абзац:** С легким юмором опиши главную черту участника, проявленную на смене (упорство, креативность, командный дух, аналитический склад ума, таинственность).\n2.  **Второй абзац:** Раскрой эту мысль, приведя 'псевдо-доказательства' из его проектной жизни. Можно немного преувеличить для комического эффекта.\n3.  **Обязательное завершение:** В конце добавь отдельный абзац с мудрыми и добрыми пожеланиями на будущее (новые открытия, вера в себя, не бояться ошибок).\n\n" f"Особый случай: {'Если рефлексий не было, пошути над его таинственностью, скажи, что он был так увлечен проектом, что ему было не до слов. Подчеркни, что его дела говорят громче.' if is_empty_reflection else ''}\n\n" f"Текст рефлексии для анализа: \"{reflections}\"")
     try:
         response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.8, max_tokens=400)
         return response.choices[0].message.content
@@ -153,7 +141,7 @@ def main():
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
     with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=False):
-        st.markdown(""" ... (ваш текст о проекте) ... """)
+        st.markdown("""**Цель дашборда** — помочь педагогам и кураторам быстро оценить эмоциональное состояние группы, выявить общие тенденции и определить учащихся, требующих особого внимания, на основе их письменных рефлексий.""")
 
     # --- Инициализация клиентов ---
     supabase = init_supabase_client()
@@ -181,7 +169,8 @@ def main():
         if uploaded_file:
             st.session_state['current_file_name'] = uploaded_file.name
             df = load_data(uploaded_file)
-            df['text'] = df['text'].astype(str).fillna('')
+            if 'text' in df.columns:
+                df['text'] = df['text'].astype(str).fillna('')
 
     if df is None:
         st.info("Пожалуйста, загрузите файл или выберите отчет в боковой панели.")
@@ -193,7 +182,8 @@ def main():
         if selected_source == "Новый анализ":
             with st.spinner('Выполняется анализ рефлексий... Это займет некоторое время.'):
                 tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
-                results = run_async(asyncio.gather(*tasks))
+                # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
+                results = asyncio.run(asyncio.gather(*tasks))
                 results_df = pd.DataFrame(results)
                 df = pd.concat([df.reset_index(drop=True), results_df.reset_index(drop=True)], axis=1)
 
@@ -210,7 +200,7 @@ def main():
     if 'data' in filtered_df.columns and not filtered_df['data'].dropna().empty:
         min_date, max_date = filtered_df['data'].min().date(), filtered_df['data'].max().date()
         if min_date != max_date:
-            start_date, end_date = st.sidebar.slider("Диапазон дат:", min_date, max_date, (min_date, max_date))
+            start_date, end_date = st.sidebar.slider("Диапазон дат:", min_value=min_date, max_value=max_date, value=(min_date, max_date))
             mask = (filtered_df['data'].dt.date >= start_date) & (filtered_df['data'].dt.date <= end_date)
             filtered_df = filtered_df.loc[mask]
 
@@ -244,7 +234,8 @@ def main():
             return pd.DataFrame(final_data)
 
         with st.sidebar.spinner(f"Генерация контента для {len(unique_students)} учеников..."):
-            creative_df = run_async(generate_all_creative_content())
+            # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
+            creative_df = asyncio.run(generate_all_creative_content())
             if not creative_df.empty:
                 st.session_state['downloadable_excel'] = to_excel(creative_df)
                 st.session_state['excel_filename'] = f"Характеристики_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
@@ -262,7 +253,7 @@ def main():
 
     # --- ОСНОВНОЙ КОНТЕНТ ДАШБОРДА ---
     st.header("Общая динамика и групповой анализ")
-    # ... (весь ваш код для отрисовки общих графиков и тепловой карты)
+    # ... (здесь ваш код для отрисовки общих графиков и тепловой карты)
 
     st.header("Анализ по отдельным учащимся")
     student_list = sorted(filtered_df['username'].unique())
@@ -270,7 +261,7 @@ def main():
         student = st.selectbox("Выберите ученика:", student_list)
         if student:
             student_df = filtered_df[filtered_df['username'] == student].sort_values('data')
-            # ... (ваш код для отрисовки индивидуальных графиков ученика)
+            # ... (здесь ваш код для отрисовки индивидуальных графиков ученика)
 
             # --- БЛОК ИНДИВИДУАЛЬНОЙ ГЕНЕРАЦИИ ---
             st.markdown("---")
@@ -283,7 +274,8 @@ def main():
                             generate_nomination_with_llm(client, full_reflection_text),
                             generate_character_description_with_llm(client, student, full_reflection_text)
                         )
-                    nomination, description = run_async(get_content())
+                    # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
+                    nomination, description = asyncio.run(get_content())
                     st.session_state[f'nomination_{student}'] = nomination
                     st.session_state[f'description_{student}'] = description
 
@@ -292,12 +284,11 @@ def main():
             if f'description_{student}' in st.session_state:
                 st.markdown(st.session_state[f'description_{student}'])
             
-            # --- Таблица с деталями ---
             st.markdown("---")
             st.subheader("Детальная таблица рефлексий")
-            # ... (ваш код для expander и st.dataframe)
+            # ... (здесь ваш код для expander и st.dataframe с деталями по ученику)
 
-    # ... (ваш код для зоны риска и т.д.)
+    # ... (здесь ваш код для зоны риска и т.д.)
 
 
 # ----------------------
