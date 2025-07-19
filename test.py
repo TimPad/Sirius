@@ -170,7 +170,16 @@ def main():
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
     with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=False):
-        st.markdown("""...""") # Скрыл для краткости
+        st.markdown("""
+        **Цель дашборда** — помочь педагогам и кураторам быстро оценить эмоциональное состояние группы, выявить общие тенденции и определить учащихся, требующих особого внимания, на основе их письменных рефлексий.
+
+        **Как это работает?**
+        1.  Для **нового анализа** загрузите Excel-файл с текстами рефлексий.
+        2.  Чтобы посмотреть **старый отчет**, выберите его из выпадающего списка. Данные загрузятся из облачного архива.
+        3.  При новом анализе искусственный интеллект (DeepSeek) анализирует каждый текст.
+        4.  После анализа вы можете **сохранить результат в архив**, нажав соответствующую кнопку. Отчет станет доступен для выбора при следующем запуске.
+        5.  В **дополнительных функциях** можно сгенерировать шуточные номинации и персональные рефлексии для участников.
+        """)
 
     supabase = init_supabase_client()
     if not supabase: st.stop()
@@ -192,7 +201,6 @@ def main():
         df = load_report_from_supabase(supabase, selected_source)
         st.session_state['current_file_name'] = selected_source
 
-    # Сброс флагов при смене источника данных
     file_key = st.session_state.get('current_file_name')
     if 'last_file_key' not in st.session_state or st.session_state.last_file_key != file_key:
         st.session_state.show_nominations = False
@@ -220,7 +228,6 @@ def main():
     else:
         df = st.session_state[session_key]
     
-    # --- ВОССТАНОВЛЕННЫЙ БЛОК СОХРАНЕНИЯ ---
     if selected_source == "Новый анализ" and uploaded_file:
         st.sidebar.header("💾 Сохранение")
         if st.sidebar.button("Сохранить в архив"):
@@ -228,20 +235,15 @@ def main():
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
                 base_filename = os.path.splitext(uploaded_file.name)[0]
                 report_filename = f"{base_filename}_processed_{timestamp}"
-
-                # Сохраняем только основной анализ, без номинаций
                 df_to_save = st.session_state[session_key].copy()
                 df_to_save['report_name'] = report_filename
-                
                 if 'data' in df_to_save.columns:
                     df_to_save['data'] = pd.to_datetime(df_to_save['data']).dt.strftime('%Y-%m-%dT%H:%M:%S')
-                
                 data_to_upload = df_to_save.replace({pd.NaT: None, np.nan: None}).to_dict(orient='records')
-                
                 try:
                     supabase.table('reports').upsert(data_to_upload, on_conflict='username,data').execute()
                     st.sidebar.success(f"Анализ сохранен как:\n**{report_filename}**")
-                    st.cache_data.clear() # Очищаем кэш для обновления списка файлов
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Ошибка сохранения в Supabase: {e}")
@@ -264,8 +266,8 @@ def main():
 
     st.sidebar.header("🎉 Дополнительные функции")
     if client:
-        if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True
-        if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True
+        if st.sidebar.button("Сгенерировать шуточные номинации"): st.session_state.show_nominations = True; st.rerun()
+        if st.sidebar.button("Сгенерировать дружелюбные рефлексии"): st.session_state.show_reflections = True; st.rerun()
     
     if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
         if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
@@ -275,14 +277,56 @@ def main():
 
     # --- 1. ВСЕГДА ОТОБРАЖАЕМ ОСНОВНОЙ ДАШБОРД ---
     st.header("Общая динамика и групповой анализ")
-    # ... (код отображения графиков и таблиц)
-    
-    st.header("Анализ по отдельным учащимся")
-    # ... (код отображения графиков и таблиц)
-    
-    st.header("Анализ \"Зоны риска\"")
-    # ... (код отображения графиков и таблиц)
+    daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
+    agg_dict = {'avg_emotion': ('emotion', 'mean'), 'avg_sentiment_10_point': ('sentiment_10_point', 'mean'), 'avg_learning_sentiment': ('learning_sentiment_10_point', 'mean'), 'avg_teamwork_sentiment': ('teamwork_sentiment_10_point', 'mean'), 'avg_organization_sentiment': ('organization_sentiment_10_point', 'mean')}
+    valid_agg_dict = {k: v for k, v in agg_dict.items() if v[0] in filtered_df.columns}
+    if valid_agg_dict:
+        daily_df = daily_groups.agg(**valid_agg_dict).reset_index().rename(columns={'data': 'Дата'}).sort_values('Дата')
+        if not daily_df.empty:
+            c1, c2 = st.columns(2)
+            with c1:
+                if 'avg_sentiment_10_point' in daily_df.columns and 'avg_emotion' in daily_df.columns:
+                    st.plotly_chart(px.line(daily_df, x='Дата', y=['avg_sentiment_10_point', 'avg_emotion'], title='Тональность vs. Самооценка'), use_container_width=True)
+            with c2: 
+                aspect_cols = ['avg_learning_sentiment', 'avg_teamwork_sentiment', 'avg_organization_sentiment']
+                if all(c in daily_df.columns for c in aspect_cols):
+                    fig = px.line(daily_df, x='Дата', y=aspect_cols, title='Динамика по аспектам')
+                    fig.for_each_trace(lambda t: t.update(name = {'avg_learning_sentiment': 'Учёба', 'avg_teamwork_sentiment': 'Команда', 'avg_organization_sentiment': 'Организация'}.get(t.name, t.name)))
+                    st.plotly_chart(fig, use_container_width=True)
 
+    st.subheader("Тепловая карта тональности группы")
+    if 'sentiment_10_point' in filtered_df.columns:
+        heatmap_data = filtered_df.pivot_table(index='username', columns=filtered_df['data'].dt.date, values='sentiment_10_point', aggfunc='mean')
+        if not heatmap_data.empty: st.plotly_chart(px.imshow(heatmap_data, labels=dict(x="Дата", y="Ученик", color="Тональность"), color_continuous_scale='RdYlGn', aspect="auto"), use_container_width=True)
+        else: st.info("Недостаточно данных для тепловой карты.")
+
+    st.header("Анализ по отдельным учащимся")
+    student_list = sorted(filtered_df['username'].unique())
+    if student_list:
+        if student := st.selectbox("Выберите ученика:", student_list):
+            student_df = filtered_df[filtered_df['username'] == student].sort_values('data')
+            c1, c2 = st.columns([3, 2])
+            with c1:
+                if 'sentiment_10_point' in student_df.columns and 'emotion' in student_df.columns:
+                    st.plotly_chart(px.line(student_df, x='data', y=['sentiment_10_point', 'emotion'], title=f'Тональность vs. Самооценка'), use_container_width=True)
+            with c2:
+                radar_cols = ['emotion', 'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point']
+                if all(c in student_df.columns for c in radar_cols):
+                    radar_values = [student_df[col].mean() for col in radar_cols]
+                    fig_radar = go.Figure(data=go.Scatterpolar(r=radar_values, theta=['Самооценка', 'Учёба', 'Команда', 'Организация'], fill='toself'))
+                    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[1, 10])), title=f"Средние оценки для {student}")
+                    st.plotly_chart(fig_radar, use_container_width=True)
+            
+            display_cols = ['data', 'text', 'emotion', 'sentiment_10_point', 'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point', 'learning_feedback', 'teamwork_feedback', 'organization_feedback']
+            st.dataframe(student_df[[col for col in display_cols if col in student_df.columns]])
+
+    st.header("Анализ \"Зоны риска\"")
+    if 'sentiment_score' in filtered_df.columns:
+        risk_users = filtered_df[filtered_df['sentiment_score'] < 0].groupby('username').size().reset_index(name='negative_count').query('negative_count > 1').sort_values('negative_count', ascending=False)
+        if not risk_users.empty:
+            st.warning("Выявлены участники с многократной негативной тональностью:")
+            st.dataframe(risk_users)
+        else: st.success("Участников с повторяющимся негативом не выявлено.")
 
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
     if st.session_state.get('show_nominations'):
