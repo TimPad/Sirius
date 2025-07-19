@@ -1,4 +1,4 @@
-# 1. Установка зависимостей (без изменений)
+# 1. Установка зависимостей
 # ----------------------
 import subprocess
 import sys
@@ -17,91 +17,67 @@ from openai import AsyncOpenAI
 import asyncio
 import numpy as np
 import os
-
-### НОВОЕ: Импорты для работы с Supabase
 from supabase import create_client, Client
 
 # Константы для API DeepSeek
 DEESEEK_API_URL = "https://api.studio.nebius.ai/v1/"
 
 # ----------------------
-# 3. Функция загрузки данных (без изменений)
+# 3. Функция загрузки данных
 # ----------------------
 @st.cache_data
 def load_data(file_path: str) -> pd.DataFrame:
     df = pd.read_excel(file_path)
-    # Приводим названия колонок к нижнему регистру и убираем пробелы
     df.columns = [str(col).strip().lower() if isinstance(col, str) else col for col in df.columns]
     if 'data' in df.columns:
         df['data'] = pd.to_datetime(df['data'], errors='coerce')
     return df
 
 # ----------------------
-# 4. БЛОК ПРЕДОБРАБОТКИ ТЕКСТА (NLP) - УДАЛЕН
-# ----------------------
-
-# ----------------------
-# 5. DeepSeek API анализ (без изменений)
+# 4. DeepSeek API анализ
 # ----------------------
 async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> dict:
-    """
-    Асинхронно анализирует текст рефлексии с помощью DeepSeek API.
-    """
     error_result = {
-        "sentiment_score": 0.0,
-        "learning_feedback": "N/A",
-        "teamwork_feedback": "N/A",
-        "organization_feedback": "N/A",
-        "learning_sentiment_score": 0.0,
-        "teamwork_sentiment_score": 0.0,
-        "organization_sentiment_score": 0.0,
+        "sentiment_score": 0.0, "learning_feedback": "N/A", "teamwork_feedback": "N/A",
+        "organization_feedback": "N/A", "learning_sentiment_score": 0.0,
+        "teamwork_sentiment_score": 0.0, "organization_sentiment_score": 0.0,
     }
     if not text or not isinstance(text, str) or not text.strip():
         return error_result
-
     prompt = (
         "Ты — ИИ-ассистент для анализа текстов рефлексии. Проанализируй рефлексию школьника. "
         "Твоя задача — вернуть JSON-объект со следующими ключами:\n"
-        "1. 'sentiment_score': общая тональность текста, число от -1.0 (негатив) до 1.0 (позитив).\n"
-        "2. 'learning_feedback': краткая выжимка (1-2 предложения) из текста об оценке учебного процесса.\n"
-        "3. 'teamwork_feedback': краткая выжимка (1-2 предложения) об оценке работы в команде.\n"
-        "4. 'organization_feedback': краткая выжимка (1-2 предложения) об оценке организационных и досуговых моментов.\n"
+        "1. 'sentiment_score': общая тональность текста, число от -1.0 до 1.0.\n"
+        "2. 'learning_feedback': краткая выжимка (1-2 предложения) об оценке учебного процесса.\n"
+        "3. 'teamwork_feedback': краткая выжимка (1-2 предложения) о работе в команде.\n"
+        "4. 'organization_feedback': краткая выжимка (1-2 предложения) об организации и досуге.\n"
         "5. 'learning_sentiment_score': тональность ТОЛЬКО части про учёбу (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n"
         "6. 'teamwork_sentiment_score': тональность ТОЛЬКО части про команду (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n"
         "7. 'organization_sentiment_score': тональность ТОЛЬКО части про организацию (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n\n"
-        "Если какой-то аспект в тексте не упоминается, для ключей feedback оставь пустую строку, а для ключей sentiment_score верни 0.0.\n\n"
         f"Текст для анализа: \"{text}\""
     )
-
     try:
         response = await client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            response_format={"type": "json_object"}
+            model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}],
+            temperature=0.2, response_format={"type": "json_object"}
         )
-        content = response.choices[0].message.content
-        result = json.loads(content)
+        result = json.loads(response.choices[0].message.content)
         for key, value in error_result.items():
-            if key not in result:
-                result[key] = value
+            if key not in result: result[key] = value
         return result
-
     except Exception as e:
         print(f"Error processing text: '{text[:50]}...'. Error: {e}")
-        st.error(f"Ошибка при вызове DeepSeek API: {e}")
         return error_result
 
 # ----------------------
-# НОВЫЕ ФУНКЦИИ ГЕНЕРАЦИИ (без изменений)
+# 5. Новые функции генерации
 # ----------------------
 async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str) -> dict:
     prompt = (
         "Ты — ИИ-ассистент, анализирующий рефлексии школьников с морской научно-технической проектной смены. "
         f"На основе рефлексий участника по имени {username}: \"{text}\", присвой шуточную номинацию в морской тематике "
-        "(например, 'Капитан Гениальности', 'Инженер Глубин') и дай краткое обоснование (1-2 предложения), "
-        "почему она подходит, основываясь на содержании рефлексий. Номинация и обоснование должны быть позитивными, "
-        "подходящими для школьников и связанными с морской/научно-технической тематикой. "
+        "(например, 'Капитан Гениальности', 'Инженер Глубин') и дай краткое обоснование (1-2 предложения). "
+        "Номинация и обоснование должны быть позитивными и подходящими для школьников. "
         "Верни JSON-объект: {\"nomination\": str, \"justification\": str}."
     )
     default_result = {"nomination": "Морской Исследователь", "justification": "За активное участие в проекте!"}
@@ -118,8 +94,7 @@ async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI) ->
     tasks = [_get_one_nomination(client, row['username'], row['text']) for _, row in user_reflections.iterrows()]
     results = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(results)
-    final_df = pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
-    return final_df
+    return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
 
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
@@ -128,9 +103,8 @@ def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFra
 async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str) -> dict:
     prompt = (
         "Ты — ИИ-ассистент, суммирующий рефлексии школьников с морской научно-технической проектной смены. "
-        f"На основе рефлексий участника по имени {username}: \"{text}\", создай дружелюбное, шуточное резюме его рефлексий (2-3 предложения) "
-        "и позитивное напутствие (1-2 предложения) для мотивации. Тон должен быть позитивным, не обидным, "
-        "подходящим для школьников, с учетом морской/научно-технической тематики (например, используй слова 'курс', 'плавание', 'горизонты'). "
+        f"На основе рефлексий участника по имени {username}: \"{text}\", создай дружелюбное, шуточное резюме (2-3 предложения) "
+        "и позитивное напутствие (1-2 предложения). Тон должен быть позитивным, не обидным, с учетом морской тематики. "
         "Верни JSON-объект: {\"reflection\": str, \"encouragement\": str}."
     )
     default_result = {"reflection": "Ты отлично справляешься с проектами!", "encouragement": "Продолжай в том же духе и покоряй новые горизонты!"}
@@ -147,33 +121,22 @@ async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncO
     tasks = [_get_one_friendly_reflection(client, row['username'], row['text']) for _, row in user_reflections.iterrows()]
     results = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(results)
-    final_df = pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'reflection': 'Рефлексия', 'encouragement': 'Пожелание'})
-    return final_df
+    return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'reflection': 'Рефлексия', 'encouragement': 'Пожелание'})
 
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
 def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
     return asyncio.run(_generate_friendly_reflections_async(_df, client))
 
 # ----------------------
-# 6. Конвертация тональности (без изменений)
+# 6. Вспомогательные функции
 # ----------------------
 def convert_sentiment_to_10_point(score: float) -> float:
-    if not isinstance(score, (int, float)):
-        return 5.5
-    return (score + 1) * 4.5 + 1
+    return (score + 1) * 4.5 + 1 if isinstance(score, (int, float)) else 5.5
 
-# ----------------------
-# 7. Функции для работы с Supabase (без изменений)
-# ----------------------
 @st.cache_resource
 def init_supabase_client():
     try:
-        supabase_url = st.secrets["SUPABASE_URL"]
-        supabase_key = st.secrets["SUPABASE_KEY"]
-        return create_client(supabase_url, supabase_key)
-    except KeyError as e:
-        st.error(f"Ошибка: ключ '{e.args[0]}' не найден в секретах Streamlit. Пожалуйста, добавьте его в настройки.")
-        return None
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     except Exception as e:
         st.error(f"Ошибка подключения к Supabase: {e}")
         return None
@@ -194,84 +157,58 @@ def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFra
         df = pd.DataFrame(response.data)
         if 'data' in df.columns:
             df['data'] = pd.to_datetime(df['data'], errors='coerce')
-        if not df.empty:
-            df = df.drop(columns=['id', 'created_at', 'report_name'], errors='ignore')
-        return df
+        return df.drop(columns=['id', 'created_at', 'report_name'], errors='ignore') if not df.empty else df
     except Exception as e:
         st.error(f"Ошибка при загрузке отчета '{report_name}': {e}")
         return pd.DataFrame()
 
 # ----------------------
-# 8. Основная логика и дашборд на Streamlit (ИЗМЕНЕНО)
+# 7. Основная логика и дашборд
 # ----------------------
 def main():
     st.set_page_config(layout="wide")
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
     with st.expander("ℹ️ О проекте: что это и как пользоваться?", expanded=False):
-        st.markdown("""
-        ... (текст без изменений) ...
-        """)
+        st.markdown("""...""") # Скрыл для краткости
 
     supabase = init_supabase_client()
-    if not supabase:
-        st.stop()
+    if not supabase: st.stop()
 
     st.sidebar.header("🗂️ Источник данных")
     report_files = get_report_list_from_supabase(supabase)
     data_source_options = ["Новый анализ"] + report_files
-    selected_source = st.sidebar.selectbox("Выберите отчет из архива или начните новый анализ:", data_source_options)
+    selected_source = st.sidebar.selectbox("Выберите отчет:", data_source_options)
 
-    # --- Инициализация флагов отображения в session_state при смене источника данных ---
-    # Это нужно, чтобы при загрузке нового файла старые сгенерированные таблицы не отображались
-    current_file_key = f"current_file_{selected_source}"
-    if 'last_file_key' not in st.session_state or st.session_state.last_file_key != current_file_key:
+    # Сброс флагов при смене источника данных
+    file_key = uploaded_file.name if selected_source == "Новый анализ" and (uploaded_file := st.sidebar.file_uploader("Загрузите Excel-файл:", type="xlsx")) else selected_source
+    if 'last_file_key' not in st.session_state or st.session_state.last_file_key != file_key:
         st.session_state.show_nominations = False
         st.session_state.show_reflections = False
-        st.session_state.last_file_key = current_file_key
+        st.session_state.last_file_key = file_key
         
     df = None
-    uploaded_file = None
     if selected_source != "Новый анализ":
-        st.sidebar.success(f"Загружен отчет из архива: {selected_source}")
         df = load_report_from_supabase(supabase, selected_source)
         st.session_state['current_file_name'] = selected_source
-    else:
-        st.sidebar.header("📄 Загрузка для нового анализа")
-        uploaded_file = st.sidebar.file_uploader("Загрузите Excel-файл с рефлексиями", type="xlsx")
-        if uploaded_file:
-            st.session_state['current_file_name'] = uploaded_file.name
-            current_file_key = f"current_file_{uploaded_file.name}"
-            if 'last_file_key' not in st.session_state or st.session_state.last_file_key != current_file_key:
-                st.session_state.show_nominations = False
-                st.session_state.show_reflections = False
-                st.session_state.last_file_key = current_file_key
-            df = load_data(uploaded_file)
-            df['text'] = df['text'].astype(str).fillna('')
+    elif uploaded_file:
+        df = load_data(uploaded_file)
+        df['text'] = df['text'].astype(str).fillna('')
+        st.session_state['current_file_name'] = uploaded_file.name
 
     if df is None:
-        st.info("Пожалуйста, загрузите файл для нового анализа или выберите готовый отчет в боковой панели.")
+        st.info("Пожалуйста, загрузите файл или выберите отчет.")
         return
 
-    client = None
-    if selected_source == "Новый анализ":
-        try:
-            api_key = st.secrets["DEEPSEEK_API_KEY"]
-            client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=api_key)
-        except KeyError:
-            st.sidebar.error("API-ключ DeepSeek не найден.")
-            st.stop()
+    client = AsyncOpenAI(base_url=DEESEEK_API_URL, api_key=st.secrets["DEEPSEEK_API_KEY"]) if selected_source == "Новый анализ" else None
 
     session_key = f"df_processed_{st.session_state.get('current_file_name', 'default')}"
     if session_key not in st.session_state:
-        # ... (логика обработки и сохранения df в session_state без изменений) ...
         if selected_source == "Новый анализ" and client:
-            with st.spinner('Выполняется анализ рефлексий... Это займет некоторое время.'):
-                tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
-                async def gather_tasks(): return await asyncio.gather(*tasks)
+            with st.spinner('Выполняется анализ рефлексий...'):
+                async def gather_tasks(): return await asyncio.gather(*[analyze_reflection_with_deepseek(client, text) for text in df['text']])
                 results = asyncio.run(gather_tasks())
-                results_df = pd.DataFrame(results)
-                df = pd.concat([df.reset_index(drop=True), results_df.reset_index(drop=True)], axis=1)
+                df = pd.concat([df.reset_index(drop=True), pd.DataFrame(results).reset_index(drop=True)], axis=1)
         
         for col in ['sentiment_score', 'learning_sentiment_score', 'teamwork_sentiment_score', 'organization_sentiment_score']:
             if col in df.columns:
@@ -280,88 +217,95 @@ def main():
     else:
         df = st.session_state[session_key]
 
-    if selected_source == "Новый анализ" and uploaded_file:
-        # ... (логика сохранения в архив без изменений) ...
-        st.sidebar.header("💾 Сохранение")
-        if st.sidebar.button("Сохранить в архив"):
-            # ...
-            pass # Код сохранения
-
     if df.empty:
-        st.error("Нет данных для отображения.")
+        st.warning("Нет данных для отображения.")
         return
         
-    filtered_df = df.copy()
+    filtered_df = df.copy() # Дальнейшая работа с копией
 
     st.sidebar.header("📊 Фильтры")
-    # ... (логика фильтрации без изменений) ...
     if 'data' in filtered_df.columns and not filtered_df['data'].dropna().empty:
-        #...
-        pass
-    
+        min_date, max_date = filtered_df['data'].min().date(), filtered_df['data'].max().date()
+        if min_date != max_date:
+            start_date, end_date = st.sidebar.slider("Диапазон дат:", min_date, max_date, (min_date, max_date))
+            filtered_df = filtered_df.loc[(filtered_df['data'].dt.date >= start_date) & (filtered_df['data'].dt.date <= end_date)]
     if filtered_df.empty:
-        st.error("Нет данных для отображения по выбранным фильтрам.")
+        st.error("Нет данных по выбранным фильтрам.")
         return
 
-    # --- ИЗМЕНЕННЫЙ БЛОК: Управление отображением через флаги ---
+    # --- Управление отображением через флаги ---
     st.sidebar.header("🎉 Дополнительные функции")
-    if st.sidebar.button("Сгенерировать шуточные номинации"):
-        st.session_state.show_nominations = True
-
-    if st.sidebar.button("Сгенерировать дружелюбные рефлексии"):
-        st.session_state.show_reflections = True
-        
-    # Показываем кнопку "Скрыть", только если есть что скрывать
-    if st.session_state.get('show_nominations', False) or st.session_state.get('show_reflections', False):
-        if st.sidebar.button("Скрыть дополнительные таблицы"):
+    if client: # Кнопки активны только для нового анализа
+        if st.sidebar.button("Сгенерировать шуточные номинации"):
+            st.session_state.show_nominations = True
+        if st.sidebar.button("Сгенерировать дружелюбные рефлексии"):
+            st.session_state.show_reflections = True
+    
+    if st.session_state.get('show_nominations') or st.session_state.get('show_reflections'):
+        if st.sidebar.button("Скрыть доп. таблицы", type="primary"):
             st.session_state.show_nominations = False
             st.session_state.show_reflections = False
-
+            st.rerun()
 
     # --- 1. ВСЕГДА ОТОБРАЖАЕМ ОСНОВНОЙ ДАШБОРД ---
     st.header("Общая динамика и групповой анализ")
-    # ... (весь код для графиков и тепловой карты дашборда) ...
     daily_groups = filtered_df.groupby(filtered_df['data'].dt.date)
-    # ... и так далее
-    st.header("Анализ по отдельным учащимся")
-    # ... (весь код для анализа по учащимся, радара и таблицы) ...
-    st.header("Анализ \"Зоны риска\": участники с повторяющимся негативом")
-    # ... (весь код для анализа зон риска) ...
+    agg_dict = {'avg_emotion': ('emotion', 'mean'), 'avg_sentiment_10_point': ('sentiment_10_point', 'mean'), 'avg_learning_sentiment': ('learning_sentiment_10_point', 'mean'), 'avg_teamwork_sentiment': ('teamwork_sentiment_10_point', 'mean'), 'avg_organization_sentiment': ('organization_sentiment_10_point', 'mean')}
+    valid_agg_dict = {k: v for k, v in agg_dict.items() if v[0] in filtered_df.columns}
+    if valid_agg_dict:
+        daily_df = daily_groups.agg(**valid_agg_dict).reset_index().rename(columns={'data': 'Дата'}).sort_values('Дата')
+        if not daily_df.empty:
+            c1, c2 = st.columns(2)
+            with c1: st.plotly_chart(px.line(daily_df, x='Дата', y=['avg_sentiment_10_point', 'avg_emotion'], title='Тональность vs. Самооценка'), use_container_width=True)
+            with c2: 
+                fig = px.line(daily_df, x='Дата', y=['avg_learning_sentiment', 'avg_teamwork_sentiment', 'avg_organization_sentiment'], title='Динамика по аспектам')
+                fig.for_each_trace(lambda t: t.update(name = {'avg_learning_sentiment': 'Учёба', 'avg_teamwork_sentiment': 'Команда', 'avg_organization_sentiment': 'Организация'}.get(t.name, t.name)))
+                st.plotly_chart(fig, use_container_width=True)
 
+    st.subheader("Тепловая карта тональности группы")
+    if 'sentiment_10_point' in filtered_df.columns:
+        heatmap_data = filtered_df.pivot_table(index='username', columns=filtered_df['data'].dt.date, values='sentiment_10_point', aggfunc='mean')
+        if not heatmap_data.empty: st.plotly_chart(px.imshow(heatmap_data, labels=dict(x="Дата", y="Ученик", color="Тональность"), color_continuous_scale='RdYlGn', aspect="auto"), use_container_width=True)
+        else: st.info("Недостаточно данных для тепловой карты.")
+
+    st.header("Анализ по отдельным учащимся")
+    if student := st.selectbox("Выберите ученика:", sorted(filtered_df['username'].unique())):
+        student_df = filtered_df[filtered_df['username'] == student].sort_values('data')
+        c1, c2 = st.columns([3, 2])
+        with c1: st.plotly_chart(px.line(student_df, x='data', y=['sentiment_10_point', 'emotion'], title=f'Тональность vs. Самооценка'), use_container_width=True)
+        with c2:
+            radar_values = [student_df[col].mean() for col in ['emotion', 'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point']]
+            fig_radar = go.Figure(data=go.Scatterpolar(r=radar_values, theta=['Самооценка', 'Учёба', 'Команда', 'Организация'], fill='toself'))
+            fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[1, 10])), title=f"Средние оценки для {student}")
+            st.plotly_chart(fig_radar, use_container_width=True)
+        st.dataframe(student_df[[col for col in ['data', 'text', 'emotion', 'sentiment_10_point', 'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point', 'learning_feedback', 'teamwork_feedback', 'organization_feedback'] if col in student_df.columns]])
+
+    st.header("Анализ \"Зоны риска\"")
+    if 'sentiment_score' in filtered_df.columns:
+        risk_users = filtered_df[filtered_df['sentiment_score'] < 0].groupby('username').size().reset_index(name='negative_count').query('negative_count > 1').sort_values('negative_count', ascending=False)
+        if not risk_users.empty:
+            st.warning("Выявлены участники с многократной негативной тональностью:")
+            st.dataframe(risk_users)
+        else: st.success("Участников с повторяющимся негативом не выявлено.")
 
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
-    # Блок для номинаций
-    if st.session_state.get('show_nominations', False):
+    if st.session_state.get('show_nominations'):
         st.header("🏆 Шуточные номинации участников")
         nominations_key = f"nominations_{session_key}"
-        
-        if client is None:
-            st.error("Генерация недоступна при просмотре отчета из архива. Выберите 'Новый анализ' в боковой панели.")
-        else:
-            if nominations_key not in st.session_state:
-                with st.spinner("Создаем номинации... Это может занять несколько минут..."):
-                    nominations_df = get_cached_nominations(filtered_df, client)
-                    st.session_state[nominations_key] = nominations_df
-            
-            st.dataframe(st.session_state[nominations_key], use_container_width=True)
+        if nominations_key not in st.session_state:
+            with st.spinner("Создаем номинации..."):
+                st.session_state[nominations_key] = get_cached_nominations(filtered_df, client)
+        st.dataframe(st.session_state[nominations_key], use_container_width=True)
 
-    # Блок для рефлексий
-    if st.session_state.get('show_reflections', False):
+    if st.session_state.get('show_reflections'):
         st.header("🌟 Дружелюбные рефлексии и напутствия")
-        reflections_key = f"friendly_reflections_{session_key}"
-
-        if client is None:
-            st.error("Генерация недоступна при просмотре отчета из архива. Выберите 'Новый анализ' в боковой панели.")
-        else:
-            if reflections_key not in st.session_state:
-                with st.spinner("Пишем дружеские послания... Это может занять несколько минут..."):
-                    reflections_df = get_cached_friendly_reflections(filtered_df, client)
-                    st.session_state[reflections_key] = reflections_df
-
-            df_to_display = st.session_state[reflections_key].copy()
-            df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
-            st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
-
+        reflections_key = f"reflections_{session_key}"
+        if reflections_key not in st.session_state:
+            with st.spinner("Пишем дружеские послания..."):
+                st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client)
+        df_to_display = st.session_state[reflections_key].copy()
+        df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
+        st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
 
 if __name__ == "__main__":
     main()
