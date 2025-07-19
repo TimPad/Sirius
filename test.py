@@ -3,7 +3,6 @@
 import subprocess
 import sys
 
-
 # ----------------------
 # 2. Импорты и константы
 # ----------------------
@@ -96,15 +95,20 @@ async def _generate_nominations_async(_df: pd.DataFrame, client: AsyncOpenAI, st
     results_df = pd.DataFrame(results)
     return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'nomination': 'Номинация', 'justification': 'Обоснование'})
 
+# --- ИЗМЕНЕНИЕ: Функция стала async и использует await ---
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
-def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
-    return asyncio.run(_generate_nominations_async(_df, client, style, examples))
+async def get_cached_nominations(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
+    return await _generate_nominations_async(_df, client, style, examples)
 
-async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str) -> dict:
+# --- ИЗМЕНЕНИЕ: Восстановлена передача style и examples ---
+async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text: str, style: str, examples: str) -> dict:
     prompt = (
-        "Ты — ИИ-ассистент, суммирующий рефлексии школьников с морской научно-технической проектной смены. "
-        f"На основе рефлексий участника по имени {username}: \"{text}\", создай дружелюбное, шуточную харакетристику (2-3 абзаца) с инсайтами из рефлексий "
-        "и позитивное напутствие (1 абзац). Тон должен быть позитивным, не обидным, мотивировать на дальнейшее развитие в учебе, проектой деятельности и в жизни с учетом морской тематики. "
+        f"Ты — ИИ-ассистент, который пишет характеристики для школьников на основе их рефлексий.\n"
+        f"Стиль характеристики: {style}.\n"
+        f"Вот примеры для вдохновения (они помогут задать правильный тон и формат):\n{examples}\n\n"
+        f"На основе рефлексий участника по имени {username}: \"{text}\", напиши характеристику в заданном стиле. "
+        "Она должна состоять из 2-3 абзацев с инсайтами из рефлексий и 1 абзаца с позитивным напутствием. "
+        "Тон должен быть позитивным, не обидным, мотивировать на дальнейшее развитие в учебе, проектной деятельности и в жизни. "
         "Верни JSON-объект: {\"reflection\": str, \"encouragement\": str}."
     )
     default_result = {"reflection": "Ты отлично справляешься с проектами!", "encouragement": "Продолжай в том же духе и покоряй новые горизонты!"}
@@ -116,16 +120,18 @@ async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text:
         print(f"Error generating friendly reflection for {username}: {e}")
         return default_result
 
-async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
+# --- ИЗМЕНЕНИЕ: Восстановлена передача style и examples ---
+async def _generate_friendly_reflections_async(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
     user_reflections = _df.groupby('username')['text'].apply(lambda texts: ' '.join(texts.astype(str).str.strip())).reset_index()
-    tasks = [_get_one_friendly_reflection(client, row['username'], row['text']) for _, row in user_reflections.iterrows()]
+    tasks = [_get_one_friendly_reflection(client, row['username'], row['text'], style, examples) for _, row in user_reflections.iterrows()]
     results = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(results)
     return pd.concat([user_reflections[['username']], results_df], axis=1).rename(columns={'username': 'ФИО', 'reflection': 'Рефлексия', 'encouragement': 'Пожелание'})
 
+# --- ИЗМЕНЕНИЕ: Функция стала async и использует await ---
 @st.cache_data(show_spinner=False, hash_funcs={AsyncOpenAI: lambda _: None})
-def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI) -> pd.DataFrame:
-    return asyncio.run(_generate_friendly_reflections_async(_df, client))
+async def get_cached_friendly_reflections(_df: pd.DataFrame, client: AsyncOpenAI, style: str, examples: str) -> pd.DataFrame:
+    return await _generate_friendly_reflections_async(_df, client, style, examples)
 
 # ----------------------
 # 6. Вспомогательные функции
@@ -165,7 +171,8 @@ def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFra
 # ----------------------
 # 7. Основная логика и дашборд
 # ----------------------
-def main():
+# --- ИЗМЕНЕНИЕ: Функция main стала асинхронной ---
+async def main():
     st.set_page_config(layout="wide")
     st.title("Интерактивный дашборд для анализа рефлексий учащихся")
 
@@ -214,8 +221,9 @@ def main():
     if session_key not in st.session_state:
         if selected_source == "Новый анализ" and client:
             with st.spinner('Выполняется анализ рефлексий...'):
-                async def gather_tasks(): return await asyncio.gather(*[analyze_reflection_with_deepseek(client, text) for text in df['text']])
-                results = asyncio.run(gather_tasks())
+                # --- ИЗМЕНЕНИЕ: Прямой вызов await asyncio.gather ---
+                tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
+                results = await asyncio.gather(*tasks)
                 df = pd.concat([df.reset_index(drop=True), pd.DataFrame(results).reset_index(drop=True)], axis=1)
         
         for col in ['sentiment_score', 'learning_sentiment_score', 'teamwork_sentiment_score', 'organization_sentiment_score']:
@@ -253,10 +261,15 @@ def main():
 
     st.sidebar.header("📊 Фильтры")
     if 'data' in filtered_df.columns and not filtered_df['data'].dropna().empty:
-        min_date, max_date = filtered_df['data'].min().date(), filtered_df['data'].max().date()
-        if min_date != max_date:
-            start_date, end_date = st.sidebar.slider("Диапазон дат:", min_date, max_date, (min_date, max_date))
-            filtered_df = filtered_df.loc[(filtered_df['data'].dt.date >= start_date) & (filtered_df['data'].dt.date <= end_date)]
+        min_date_val = filtered_df['data'].min()
+        max_date_val = filtered_df['data'].max()
+        # Проверка, что даты валидны, перед извлечением .date()
+        if pd.notna(min_date_val) and pd.notna(max_date_val):
+            min_date, max_date = min_date_val.date(), max_date_val.date()
+            if min_date != max_date:
+                start_date, end_date = st.sidebar.slider("Диапазон дат:", min_date, max_date, (min_date, max_date))
+                filtered_df = filtered_df.loc[(filtered_df['data'].dt.date >= start_date) & (filtered_df['data'].dt.date <= end_date)]
+    
     if filtered_df.empty:
         st.error("Нет данных по выбранным фильтрам.")
         return
@@ -337,25 +350,16 @@ def main():
             st.dataframe(risk_users)
         else: st.success("Участников с повторяющимся негативом не выявлено.")
 
-    # --- ИЗМЕНЕНИЕ: ДОБАВЛЕН БЛОК С ОБЩЕЙ СВОДНОЙ ТАБЛИЦЕЙ ---
     st.header("Общая сводная таблица рефлексий")
     st.markdown("Здесь представлены все отфильтрованные записи с результатами анализа. Таблицу можно сортировать, нажимая на заголовки столбцов.")
     
-    # Определяем порядок и состав столбцов для вывода
-    summary_display_cols = [
-        'username', 'data', 'text', 'emotion', 
-        'sentiment_10_point', 'learning_sentiment_10_point', 
-        'teamwork_sentiment_10_point', 'organization_sentiment_10_point',
-        'learning_feedback', 'teamwork_feedback', 'organization_feedback'
-    ]
-    # Отбираем только те столбцы, которые есть в датафрейме, чтобы избежать ошибок
+    summary_display_cols = ['username', 'data', 'text', 'emotion', 'sentiment_10_point', 'learning_sentiment_10_point', 'teamwork_sentiment_10_point', 'organization_sentiment_10_point', 'learning_feedback', 'teamwork_feedback', 'organization_feedback']
     available_cols = [col for col in summary_display_cols if col in filtered_df.columns]
     
     if available_cols:
         st.dataframe(filtered_df[available_cols], use_container_width=True)
     else:
         st.info("Нет обработанных данных для отображения в сводной таблице.")
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     # --- 2. УСЛОВНО ОТОБРАЖАЕМ ДОПОЛНИТЕЛЬНЫЕ ТАБЛИЦЫ ---
     if st.session_state.get('show_nominations'):
@@ -366,7 +370,8 @@ def main():
             nominations_key = f"nominations_{session_key}_{hash(nomination_style)}_{hash(nomination_examples)}"
             if nominations_key not in st.session_state:
                 with st.spinner("Создаем номинации по вашему стилю..."):
-                    st.session_state[nominations_key] = get_cached_nominations(filtered_df, client, nomination_style, nomination_examples)
+                    # --- ИЗМЕНЕНИЕ: Добавлен await ---
+                    st.session_state[nominations_key] = await get_cached_nominations(filtered_df, client, nomination_style, nomination_examples)
             st.dataframe(st.session_state[nominations_key], use_container_width=True)
 
     if st.session_state.get('show_reflections'):
@@ -374,14 +379,17 @@ def main():
             st.error("Генерация характеристик невозможна: API-ключ не настроен.")
         else:
             st.header("🌟 Дружелюбные характеристики и напутствия")
+            # --- ИЗМЕНЕНИЕ: ключ кэша снова использует style и examples ---
             reflections_key = f"reflections_{session_key}_{hash(reflection_style)}_{hash(reflection_examples)}"
             if reflections_key not in st.session_state:
                 with st.spinner("Пишем дружеские послания в заданном стиле..."):
-                    st.session_state[reflections_key] = get_cached_friendly_reflections(filtered_df, client, reflection_style, reflection_examples)
+                    # --- ИЗМЕНЕНИЕ: Добавлен await и передача style/examples ---
+                    st.session_state[reflections_key] = await get_cached_friendly_reflections(filtered_df, client, reflection_style, reflection_examples)
             
             df_to_display = st.session_state[reflections_key].copy()
             df_to_display['Рефлексия и напутствие'] = df_to_display['Рефлексия'] + '\n\n**Пожелание:** ' + df_to_display['Пожелание']
             st.dataframe(df_to_display[['ФИО', 'Рефлексия и напутствие']], use_container_width=True)
 
+# --- ИЗМЕНЕНИЕ: Запуск асинхронной функции main ---
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
