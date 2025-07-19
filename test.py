@@ -95,6 +95,7 @@ def load_report_from_supabase(_supabase: Client, report_name: str) -> pd.DataFra
 
 async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> dict:
     """Асинхронно анализирует текст рефлексии для получения структурированных данных."""
+    # (Код этой и других async-функций остается без изменений)
     error_result = {"sentiment_score": 0.0, "learning_feedback": "N/A", "teamwork_feedback": "N/A", "organization_feedback": "N/A", "learning_sentiment_score": 0.0, "teamwork_sentiment_score": 0.0, "organization_sentiment_score": 0.0}
     if not text or not isinstance(text, str) or not text.strip(): return error_result
     prompt = ("Ты — ИИ-ассистент для анализа текстов рефлексии. Проанализируй рефлексию школьника. Твоя задача — вернуть JSON-объект со следующими ключами:\n1. 'sentiment_score': общая тональность текста, число от -1.0 (негатив) до 1.0 (позитив).\n2. 'learning_feedback': краткая выжимка (1-2 предложения) из текста об оценке учебного процесса.\n3. 'teamwork_feedback': краткая выжимка (1-2 предложения) об оценке работы в команде.\n4. 'organization_feedback': краткая выжимка (1-2 предложения) об оценке организационных и досуговых моментов.\n5. 'learning_sentiment_score': тональность ТОЛЬКО части про учёбу (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n6. 'teamwork_sentiment_score': тональность ТОЛЬКО части про команду (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n7. 'organization_sentiment_score': тональность ТОЛЬКО части про организацию (от -1.0 до 1.0). Если не упоминается, верни 0.0.\n\nЕсли какой-то аспект в тексте не упоминается, для ключей feedback оставь пустую строку, а для ключей sentiment_score верни 0.0.\n\n" f"Текст для анализа: \"{text}\"")
@@ -161,6 +162,7 @@ def main():
     selected_source = st.sidebar.selectbox("Выберите отчет или начните новый анализ:", data_source_options)
 
     df = None
+    uploaded_file = None # Добавим для логики сохранения
     if selected_source != "Новый анализ":
         df = load_report_from_supabase(supabase, selected_source)
         st.session_state['current_file_name'] = selected_source
@@ -181,9 +183,12 @@ def main():
     if session_key not in st.session_state:
         if selected_source == "Новый анализ":
             with st.spinner('Выполняется анализ рефлексий... Это займет некоторое время.'):
-                tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
-                # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
-                results = asyncio.run(asyncio.gather(*tasks))
+                # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ: Оборачиваем gather в async def функцию >>>
+                async def process_reflections():
+                    tasks = [analyze_reflection_with_deepseek(client, text) for text in df['text']]
+                    return await asyncio.gather(*tasks)
+                
+                results = asyncio.run(process_reflections())
                 results_df = pd.DataFrame(results)
                 df = pd.concat([df.reset_index(drop=True), results_df.reset_index(drop=True)], axis=1)
 
@@ -215,6 +220,7 @@ def main():
         unique_students = filtered_df['username'].unique()
         
         async def generate_all_creative_content():
+            # Эта функция уже была написана правильно, здесь изменений не требуется
             tasks = []
             for student_name in unique_students:
                 student_reflections = " ".join(filtered_df[filtered_df['username'] == student_name]['text'].dropna().astype(str))
@@ -234,7 +240,6 @@ def main():
             return pd.DataFrame(final_data)
 
         with st.sidebar.spinner(f"Генерация контента для {len(unique_students)} учеников..."):
-            # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
             creative_df = asyncio.run(generate_all_creative_content())
             if not creative_df.empty:
                 st.session_state['downloadable_excel'] = to_excel(creative_df)
@@ -252,8 +257,10 @@ def main():
         )
 
     # --- ОСНОВНОЙ КОНТЕНТ ДАШБОРДА ---
+    # (Здесь и далее ваш код для отрисовки графиков, таблиц и т.д.)
+    # (Я оставлю его как заглушки для краткости)
     st.header("Общая динамика и групповой анализ")
-    # ... (здесь ваш код для отрисовки общих графиков и тепловой карты)
+    # ...
 
     st.header("Анализ по отдельным учащимся")
     student_list = sorted(filtered_df['username'].unique())
@@ -261,7 +268,7 @@ def main():
         student = st.selectbox("Выберите ученика:", student_list)
         if student:
             student_df = filtered_df[filtered_df['username'] == student].sort_values('data')
-            # ... (здесь ваш код для отрисовки индивидуальных графиков ученика)
+            # ...
 
             # --- БЛОК ИНДИВИДУАЛЬНОЙ ГЕНЕРАЦИИ ---
             st.markdown("---")
@@ -269,12 +276,12 @@ def main():
             full_reflection_text = " ".join(student_df['text'].dropna().astype(str))
             if st.button(f"Сгенерировать для {student}"):
                 with st.spinner("Магия творится..."):
+                    # Эта функция также уже была написана правильно
                     async def get_content():
                         return await asyncio.gather(
                             generate_nomination_with_llm(client, full_reflection_text),
                             generate_character_description_with_llm(client, student, full_reflection_text)
                         )
-                    # ИСПРАВЛЕНИЕ: Используем стандартный asyncio.run
                     nomination, description = asyncio.run(get_content())
                     st.session_state[f'nomination_{student}'] = nomination
                     st.session_state[f'description_{student}'] = description
@@ -286,9 +293,7 @@ def main():
             
             st.markdown("---")
             st.subheader("Детальная таблица рефлексий")
-            # ... (здесь ваш код для expander и st.dataframe с деталями по ученику)
-
-    # ... (здесь ваш код для зоны риска и т.д.)
+            # ...
 
 
 # ----------------------
