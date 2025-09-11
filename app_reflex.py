@@ -57,7 +57,7 @@ async def analyze_reflection_with_deepseek(client: AsyncOpenAI, text: str) -> di
     )
     try:
         response = await client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}],
+            model="deepseek-ai/DeepSeek-R1-0528", messages=[{"role": "user", "content": prompt}],
             temperature=0.2, response_format={"type": "json_object"}
         )
         result = json.loads(response.choices[0].message.content)
@@ -81,7 +81,7 @@ async def _get_one_nomination(client: AsyncOpenAI, username: str, text: str, sty
     )
     default_result = {"nomination": "Морской Исследователь", "justification": "За активное участие в проекте!"}
     try:
-        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.8, response_format={"type": "json_object"})
+        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-R1-0528", messages=[{"role": "user", "content": prompt}], temperature=0.8, response_format={"type": "json_object"})
         result = json.loads(response.choices[0].message.content)
         return result if 'nomination' in result and 'justification' in result else default_result
     except Exception as e:
@@ -112,7 +112,7 @@ async def _get_one_friendly_reflection(client: AsyncOpenAI, username: str, text:
     )
     default_result = {"reflection": "Ты отлично справляешься с проектами!", "encouragement": "Продолжай в том же духе и покоряй новые горизонты!"}
     try:
-        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-V3", messages=[{"role": "user", "content": prompt}], temperature=0.7, response_format={"type": "json_object"})
+        response = await client.chat.completions.create(model="deepseek-ai/DeepSeek-R1-0528", messages=[{"role": "user", "content": prompt}], temperature=0.7, response_format={"type": "json_object"})
         result = json.loads(response.choices[0].message.content)
         return result if 'reflection' in result and 'encouragement' in result else default_result
     except Exception as e:
